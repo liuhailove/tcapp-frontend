@@ -10,7 +10,9 @@
     "test": "vitest run src"
   },
   "dependencies": {
+    "events": "^3.3.0",
     "loglevel": "^1.9.1",
+    "typed-emitter": "^2.1.0",
     "vitest": "^1.4.0",
     "vue": "^3.4.21"
   },

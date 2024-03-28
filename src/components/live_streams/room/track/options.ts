@@ -357,7 +357,7 @@ export class VideoPreset {
     constructor(
         width: number,
         height: number,
-        maxBitrate: number,
+        maxBitrate?: number,
         maxFramerate?: number,
         priority?: RTCPriorityType
     );

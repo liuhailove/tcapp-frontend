@@ -11,9 +11,7 @@ import {
     VideoCodec, videoCodecs
 } from "./options";
 import {cloneDeep} from "../../utils/cloneDeep";
-import {an} from "vitest/dist/reporters-P7C2ytIv";
 import {isSafari, sleep} from "../utils";
-import {vi} from "vitest";
 import {TrackPublishedResponse} from "../../protocol/tc_rtc_pb";
 import {AudioTrack} from "./Types";
 

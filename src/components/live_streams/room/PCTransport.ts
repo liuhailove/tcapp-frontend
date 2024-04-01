@@ -1,5 +1,6 @@
 import {EventEmitter} from 'events';
 import log, {LoggerNames, getLogger} from '../logger';
+import {LoggerOptions} from "./types";
 
 /**
  * 音轨比特信息
@@ -61,5 +62,77 @@ export default class PCTransport extends EventEmitter {
      * logger选项
      */
     private loggerOptions: LoggerOptions;
+
+    /**
+     * 待定候选人
+     */
+    pendingCandidates: RTCIceCandidateInit[] = [];
+
+    /**
+     * 重启ICE
+     */
+    restartingIce: boolean = false;
+
+    /**
+     * 重新谈判
+     */
+    renegotiate: boolean = false;
+
+    /**
+     * 音轨比特率
+     */
+    trackBitrates: TrackBitrateInfo[] = [];
+
+    /**
+     * 远程立体声中频
+     */
+    remoteStereoMids: string[] = [];
+
+    /**
+     * 远程Nack中频
+     */
+    remoteNackMids: string[] = [];
+
+    /**
+     * SDP offer 是一个包含本地设备的媒体信息和网络地址的描述。
+     * 当你想要建立一个点对点连接时，你可以创建一个 SDP offer，并将其发送给远程对等方。
+     */
+    onOffer?: (offer: RTCSessionDescriptionInit) => void;
+
+    /**
+     * Ice候选加入事件
+     */
+    onIceCandidate?: (candidate: RTCIceCandidate) => void;
+
+    /**
+     * 在 WebRTC 中，onicecandidateerror 事件用于处理 ICE（Interactive Connectivity Establishment）候选者错误。
+     * 当 ICE 候选者生成过程中发生错误时，该事件将被触发
+     */
+    onIceCandidateError?: (ev: Event) => void;
+
+    /**
+     * 连接状态改变
+     */
+    onConnectionStateChange?: (state: RTCPeerConnectionState) => void;
+
+    /**
+     * ice状态变化
+     */
+    onIceConnectionStateChange?: (state: RTCIceConnectionState) => void;
+
+    /**
+     * 信令状态改变
+     */
+    onSignalingStatechange?: (state: RTCSignalingState) => void;
+
+    /**
+     * 数据渠道事件
+     */
+    onDataChannel?: (ev: RTCDataChannelEvent) => void;
+
+    /**
+     * 音轨
+     */
+    onTrack?: (ev: RTCTrackEvent) => void;
 }
 

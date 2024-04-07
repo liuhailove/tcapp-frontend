@@ -24,6 +24,7 @@ export enum LoggerNames {
     Engine = 'tc-engine',
     Signal = 'tc-signal',
     PCManager = 'tc-pc-manager',
+    PCTransport = 'tc-pc-transport',
     E2EE = 'tc-e2ee',
 }
 

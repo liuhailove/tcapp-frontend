@@ -74,3 +74,16 @@ export class UnexpectedConnectionState extends TcError {
         super(12, message ?? 'unexpected connection state');
     }
 }
+
+
+export class NegotiationError extends TcError {
+    constructor(message?: string) {
+        super(13, message ?? 'unable to negotiate');
+    }
+}
+
+export class PublishDataError extends TcError {
+    constructor(message?: string) {
+        super(13, message ?? 'unable to publish data');
+    }
+}

@@ -477,6 +477,10 @@ export default class PCTransport extends EventEmitter {
         return this._pc?.localDescription;
     }
 
+    getRemoteDescription() {
+        return this.pc?.remoteDescription;
+    }
+
     /**
      * 获取统计信息
      */

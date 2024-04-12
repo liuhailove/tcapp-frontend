@@ -521,7 +521,7 @@ export class SignalClient {
                             reject(
                                 new ConnectionError(
                                     `did not receive join response, got ${resp.message?.case} instead`,
-                                    ,)
+                                    ),
                             );
                         }
                         if (!shouldProcessMessage) {

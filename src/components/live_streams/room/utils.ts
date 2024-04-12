@@ -487,6 +487,8 @@ export class Future<T> {
 
     resolve?: (arg: T) => void;
 
+    reject?: (e: any) => void;
+
     onFinally?: () => void;
 
     constructor(futureBase?: (resolve: (arg: T) => void, reject: (e: any) => void) => void,
@@ -495,7 +497,7 @@ export class Future<T> {
         this.onFinally = onFinally;
         this.promise = new Promise<T>(async (resolve, reject) => {
             this.resolve = resolve;
-            this.resolve = reject;
+            this.reject = reject;
             if (futureBase) {
                 await futureBase(resolve, reject);
             }

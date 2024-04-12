@@ -6,6 +6,7 @@ import {LoggerOptions} from "../types";
 import {TrackEvent} from "../TrackEvents";
 import LocalAudioTrack from "./LocalAudioTrack";
 import LocalVideoTrack from "./LocalVideoTrack";
+import {TrackPublishOptions} from "./options";
 
 /**
  * 本地音轨发布
@@ -16,6 +17,9 @@ export default class LocalTrackPublication extends TrackPublication {
      * 本地音轨
      */
     track?: LocalTrack = undefined;
+
+    options?: TrackPublishOptions;
+
 
     /**
      * 上游已暂停

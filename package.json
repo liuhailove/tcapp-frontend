@@ -15,9 +15,11 @@
     "@types/sdp-transform": "^2.4.9",
     "events": "^3.3.0",
     "loglevel": "^1.9.1",
+    "prettier": "^3.2.5",
     "sdp-transform": "^2.14.2",
     "ts-debounce": "^4.0.0",
     "typed-emitter": "^2.1.0",
+    "typedoc": "^0.25.13",
     "vitest": "^1.4.0",
     "vue": "^3.4.21"
   },

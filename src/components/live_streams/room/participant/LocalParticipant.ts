@@ -2,15 +2,21 @@ import Participant from "./Participant";
 import LocalTrackPublication from "../track/LocalTrackPublication";
 import {Track} from "../track/Track";
 import LocalTrack from "../track/LocalTrack";
-import {Encryption_Type, ParticipantPermission} from "../../protocol/tc_models_pb";
+import {
+    DataPacket,
+    DataPacket_Kind,
+    Encryption_Type, ParticipantInfo,
+    ParticipantPermission,
+    UserPacket
+} from "../../protocol/tc_models_pb";
 import {InternalRoomOptions} from "../../options";
-import {Future, isFireFox, isSafari, isSafari17, isSVCCodec, supportsAV1, supportsVP9} from "../utils";
+import {Future, isFireFox, isSafari, isSafari17, isSVCCodec, isWeb, supportsAV1, supportsVP9} from "../utils";
 import RTCEngine from "../RTCEngine";
 import {EngineEvent, ParticipantEvent, TrackEvent} from "../TrackEvents";
 import {
     AudioCaptureOptions,
     BackupVideoCodec,
-    CreateLocalTrackOptions,
+    CreateLocalTrackOptions, isBackupCodec,
     ScreenShareCaptureOptions,
     ScreenSharePresets,
     TrackPublishOptions,
@@ -25,11 +31,19 @@ import {
     mimeTypeToVideoCodecString,
     screenCaptureToDisplayMediaStreamOptions
 } from "../track/utils";
-import {computeVideoEncodings, mediaTrackToLocalTrack} from "./publishUtils";
+import {computeTrackBackupEncodings, computeVideoEncodings, mediaTrackToLocalTrack} from "./publishUtils";
 import LocalVideoTrack, {videoLayersFromEncodings} from "../track/LocalVideoTrack";
 import LocalAudioTrack from "../track/LocalAudioTrack";
 import {defaultVideoCodec} from "../defaults";
-import {AddTrackRequest, SimulcastCodec} from "../../protocol/tc_rtc_pb";
+import {
+    AddTrackRequest,
+    SimulcastCodec,
+    SubscribedQualityUpdate,
+    TrackUnpublishedResponse
+} from "../../protocol/tc_rtc_pb";
+import {PCTransportState} from "../PCTransportManager";
+import {DataPublishOptions} from "../types";
+import {an} from "vitest/dist/reporters-P7C2ytIv";
 
 
 /**
@@ -582,7 +596,7 @@ export default class LocalParticipant extends Participant {
         const isStereoInput =
             ('channelCount' in track.mediaStreamTrack.getSettings() &&
                 // @ts-ignore `channelCount` on getSettings() is currently only available for Safari, but is generally the best way to determine a stereo track https://developer.mozilla.org/en-US/docs/Web/API/MediaTrackSettings/channelCount
-                track.mediaStreamTrack.getSettings().channelCount == 2) ||
+                track.mediaStreamTrack.getSettings().channelCount === 2) ||
             track.mediaStreamTrack.getConstraints().channelCount === 2;
         const isStereo = options?.forceStereo ?? isStereoInput;
 
@@ -997,5 +1011,409 @@ export default class LocalParticipant extends Participant {
             encodings,
             trackInfo: ti,
         });
+    }
+
+    async unpublishTrack(
+        track: LocalTrack | MediaStreamTrack,
+        stopOnUnpublish?: boolean
+    ): Promise<LocalTrackPublication | undefined> {
+        // 查看所有已发布的曲目以找到正确的曲目
+        const publication = this.getPublicationForTrack(track);
+
+        const pubLogContext = publication ? getLogContextFromTrack(publication) : undefined;
+
+        this.log.debug('unpublishing track', {
+            ...this.logContext,
+            ...pubLogContext,
+        });
+
+        if (!publication || !publication.track) {
+            this.log.warn('track was not unpublished because no publication was found', {
+                ...this.logContext,
+                ...pubLogContext,
+            });
+            return undefined;
+        }
+
+        track = publication.track;
+        track.off(TrackEvent.Muted, this.onTrackMuted);
+        track.off(TrackEvent.Unmuted, this.onTrackUnmuted);
+        track.off(TrackEvent.Ended, this.handleTrackEnded);
+        track.off(TrackEvent.UpstreamPaused, this.onTrackUpstreamPaused);
+        track.off(TrackEvent.UpstreamResumed, this.onTrackUpstreamResumed);
+
+        if (stopOnUnpublish === undefined) {
+            stopOnUnpublish = this.roomOptions?.stopLocalTrackOnUnpublish ?? true;
+        }
+        if (stopOnUnpublish) {
+            track.stop();
+        }
+
+        let negotiationNeeded = false;
+        const trackSender = track.sender;
+        track.sender = undefined;
+        if (
+            this.engine.pcManager &&
+            this.engine.pcManager.currentState < PCTransportState.FAILED &&
+            trackSender
+        ) {
+            try {
+                for (const transceiver of this.engine.pcManager.publisher.getTransceivers()) {
+                    // 如果发送者当前没有发送（在replaceTrack(null)之后）
+                    //removeTrack 不会有任何效果。
+                    // 为了确保我们最终成功删除轨道，请手动设置
+                    // 收发器处于非活动状态
+                    if (transceiver.sender === trackSender) {
+                        transceiver.direction = 'inactive';
+                        negotiationNeeded = true;
+                    }
+                }
+                if (this.engine.removeTrack(trackSender)) {
+                    negotiationNeeded = true;
+                }
+                if (track instanceof LocalVideoTrack) {
+                    for (const [, trackInfo] of track.simulcastCodecs) {
+                        if (trackInfo.sender) {
+                            if (this.engine.removeTrack(trackInfo.sender)) {
+                                negotiationNeeded = true;
+                            }
+                            trackInfo.sender = undefined;
+                        }
+                    }
+                    track.simulcastCodecs.clear();
+                }
+            } catch (e) {
+                this.log.warn('failed to unpublish track', {
+                    ...this.logContext,
+                    ...pubLogContext,
+                    error: e,
+                });
+            }
+        }
+
+        // 从我们的maps中删除
+        this.trackPublications.delete(publication.trackSid);
+        switch (publication.kind) {
+            case Track.Kind.Audio:
+                this.audioTrackPublications.delete(publication.trackSid);
+                break;
+            case Track.Kind.Video:
+                this.videoTrackPublications.delete(publication.trackSid);
+                break;
+            default:
+                break;
+        }
+
+        this.emit(ParticipantEvent.LocalTrackUnpublished, publication);
+        publication.setTrack(undefined);
+
+        if (negotiationNeeded) {
+            await this.engine.negotiate();
+        }
+        return publication;
+    }
+
+    async unpublishTracks(
+        tracks: LocalTrack[] | MediaStreamTrack[],
+    ): Promise<LocalTrackPublication[]> {
+        const results = await Promise.all(tracks.map((track) => this.unpublishTrack(track)));
+        return results.filter(
+            (track) => track instanceof LocalTrackPublication,
+        ) as LocalTrackPublication[];
+    }
+
+    async republishAllTracks(options?: TrackPublishOptions, restartTracks: boolean = true) {
+        const localPubs: LocalTrackPublication[] = [];
+        this.trackPublications.forEach((pub) => {
+            if (pub.track) {
+                if (options) {
+                    pub.options = {...pub.options, ...options};
+                }
+                localPubs.push(pub);
+            }
+        });
+
+        await Promise.all(
+            localPubs.map(async (pub) => {
+                const track = pub.track!;
+                await this.unpublishTrack(track, false);
+                if (
+                    restartTracks &&
+                    !track.isMuted &&
+                    track.source !== Track.Source.ScreenShare &&
+                    track.source !== Track.Source.ScreenShareAudio &&
+                    (track instanceof LocalAudioTrack || track instanceof LocalVideoTrack) &&
+                    !track.isUserProvided
+                ) {
+                    // 通常我们需要在发布之前重新启动轨道，通常是完全重新连接
+                    // 是必要的，因为计算机已经进入睡眠状态。
+                    this.log.debug('restarting existing track', {
+                        ...this.logContext,
+                        track: pub.trackSid,
+                    });
+                    await track.restartTrack();
+                }
+                await this.publishTrack(track, pub.options);
+            }),
+        );
+    }
+
+    /**
+     * 向房间发布新的数据有效负载。 数据将被转发到每个
+     * 如果publishOptions中的目的地字段为空，则参与房间
+     *
+     * @param data 有效负载的 Uint8Array。 要发送字符串数据，请使用 TextEncoder.encode
+     * @param options 可选地指定“reliable”、“topic”和“destination”
+     */
+    async publishData(data: Uint8Array, options: DataPublishOptions = {}): Promise<void> {
+        const kind = options.reliable ? DataPacket_Kind.RELIABLE : DataPacket_Kind.LOSSY;
+        const destinationIdentities = options.destinationIdentities;
+        const topic = options.topic;
+
+        const packet = new DataPacket({
+            kind: kind,
+            value: {
+                case: 'user',
+                value: new UserPacket({
+                    participantIdentity: this.identity,
+                    payload: data,
+                    destinationIdentities,
+                    topic,
+                }),
+            },
+        });
+
+        await this.engine.sendDataPacket(packet, kind);
+    }
+
+    /**
+     * 控制谁可以订阅 LocalParticipant 已发布的曲目。
+     *
+     * 默认情况下，所有参与者都可以订阅。 这允许细粒度的控制
+     * 谁能够在参与者和跟踪级别订阅。
+     *
+     * 注意：如果在赛道级别授予访问权限（即 [allParticipantsAllowed] 和
+     * [ParticipantTrackPermission.allTracksAllowed] 为 false），任何较新发布的曲目
+     * 不会向任何参与者授予权限，并且需要后续的
+     * 权限更新以允许订阅。
+     *
+     * @param allParticipantsAllowed 允许所有参与者订阅所有曲目。
+     * 如果设置为 true，则优先于 [[participantTrackPermissions]]。
+     * 默认情况下，此设置为 true。
+     * @paramparticipantTrackPermissions 每个权限的完整列表
+     * 参与者/轨道。 任何遗漏的参与者将不会获得任何权限。
+     */
+    setTrackSubscriptionPermissions(
+        allParticipantsAllowed: boolean,
+        participantTrackPermissions: ParticipantPermission[] = [],
+    ) {
+        this.participantTrackPermissions = participantTrackPermissions;
+        this.allParticipantsAllowedToSubscribe = allParticipantsAllowed;
+        if (!this.engine.client.isDisconnected) {
+            this.updateTrackSubscriptionPermissions();
+        }
+    }
+
+    /** @internal */
+    updateInfo(info: ParticipantInfo): boolean {
+        if (info.sid !== this.sid) {
+            // 删除指定错误 sid 的更新。
+            // 本地参与者的 sid 仅在加入和完全重新连接时显式设置
+            return false;
+        }
+        if (!super.updateInfo(info)) {
+            return false;
+        }
+
+        // 协调轨道静音状态。
+        // 如果服务器的轨道静音状态与实际不匹配，我们必须更新
+        // 服务器的副本
+        info.tracks.forEach((ti) => {
+            const pub = this.trackPublications.get(ti.sid);
+
+            if (pub) {
+                const mutedOnServer = pub.isMuted || (pub.track?.isUpstreamPaused ?? false);
+                if (mutedOnServer !== ti.muted) {
+                    this.log.debug('updating server mute state after reconcile', {
+                        ...this.logContext,
+                        ...getLogContextFromTrack(pub),
+                        mutedOnServer,
+                    });
+                    this.engine.client.sendMuteTrack(ti.sid, mutedOnServer);
+                }
+            }
+        });
+        return true;
+    }
+
+    private updateTrackSubscriptionPermissions = () => {
+        this.log.debug('updating track subscription permissions', {
+            ...this.logContext,
+            allParticipantsAllowed: this.allParticipantsAllowedToSubscribe,
+            participantTrackPermissions: this.participantTrackPermissions,
+        });
+        this.engine.client.sendUpdateSubscriptionPermissions(
+            this.allParticipantsAllowedToSubscribe,
+            this.participantTrackPermissions.map((p) => trackPermissionToProto(p)),
+        );
+    };
+
+    /** @internal */
+    private onTrackUnmuted = (track: LocalTrack) => {
+        this.onTrackMuted(track, track.isUpstreamPaused);
+    };
+
+    // 当本地轨道的静音状态发生变化时，我们会通知服务器
+    /** @internal */
+    private onTrackMuted = (track: LocalTrack, muted?: boolean) => {
+        if (muted === undefined) {
+            muted = true;
+        }
+
+        if (!track.sid) {
+            this.log.error('could not update status for unpublished track', {
+                ...this.logContext,
+                ...getLogContextFromTrack(track),
+            });
+            return;
+        }
+
+        this.engine.updateMuteStatus(track.sid, muted);
+    };
+
+
+    private onTrackUpstreamPaused = (track: LocalTrack) => {
+        this.log.debug('upstream paused', {
+            ...this.logContext,
+            ...getLogContextFromTrack(track),
+        });
+        this.onTrackMuted(track, true);
+    };
+
+    private onTrackUpstreamResumed = (track: LocalTrack) => {
+        this.log.debug('upstream resumed', {
+            ...this.logContext,
+            ...getLogContextFromTrack(track),
+        });
+        this.onTrackMuted(track, track.isMuted);
+    };
+
+    private handleSubscribedQualityUpdate = async (update: SubscribedQualityUpdate) => {
+        if (!this.roomOptions?.dynacast) {
+            return;
+        }
+        const pub = this.videoTrackPublications.get(update.trackSid);
+        if (!pub) {
+            this.log.warn('received subscribed quality update for unknown track', {
+                ...this.logContext,
+                trackSid: update.trackSid,
+            });
+            return;
+        }
+        if (update.subscribedCodecs.length > 0) {
+            if (!pub.videoTrack) {
+                return;
+            }
+            const newCodecs = await pub.videoTrack.setPublishingCodecs(update.subscribedCodecs);
+            for await (const codec of newCodecs) {
+                if (isBackupCodec(codec)) {
+                    this.log.debug(`publish ${codec} for ${pub.videoTrack.sid}`, {
+                        ...this.logContext,
+                        ...getLogContextFromTrack(pub),
+                    });
+                    await this.publishAdditionalCodecForTrack(pub.videoTrack, codec, pub.options);
+                }
+            }
+        } else if (update.subscribedQualities.length > 0) {
+            await pub.videoTrack?.setPublishingLayers(update.subscribedQualities);
+        }
+    };
+
+    private handleLocalTrackUnpublished = (unpublished: TrackUnpublishedResponse) => {
+        const track = this.trackPublications.get(unpublished.trackSid);
+        if (!track) {
+            this.log.warn('received unpublished event for unknown track', {
+                ...this.logContext,
+                trackSid: unpublished.trackSid,
+            });
+            return;
+        }
+        this.unpublishTrack(track.track!);
+    }
+
+    private handleTrackEnded = async (track: LocalTrack) => {
+        if (
+            track.source === Track.Source.ScreenShare ||
+            track.source === Track.Source.ScreenShareAudio
+        ) {
+            this.log.debug('unpublishing local track due to TrackEnded', {
+                ...this.logContext,
+                ...getLogContextFromTrack(track),
+            });
+            this.unpublishTrack(track);
+        } else if (track.isUserProvided) {
+            await track.mute();
+        } else if (track instanceof LocalAudioTrack || track instanceof LocalVideoTrack) {
+            try {
+                if (isWeb()) {
+                    try {
+                        const currentPermissions = await navigator?.permissions.query({
+                            // Safari 和 Firefox 目前不支持摄像头和麦克风的权限查询
+                            // @ts-ignore
+                            name: track.source === Track.Source.Camera ? 'camera' : 'microphone',
+                        });
+                        if (currentPermissions && currentPermissions.state === 'denied') {
+                            this.log.warn(`user has revoked access to ${track.source}`, {
+                                ...this.logContext,
+                                ...getLogContextFromTrack(track),
+                            });
+
+                            // 在权限被拒绝后检测授予的更改，然后尝试恢复
+                            currentPermissions.onchange = () => {
+                                if (currentPermissions.state !== 'denied') {
+                                    if (!track.isMuted) {
+                                        track.restartTrack();
+                                    }
+                                    currentPermissions.onchange = null;
+                                }
+                            };
+                            throw new Error('GetUserMedia Permission denied');
+                        }
+                    } catch (e: any) {
+                        // Firefox 的权限查询失败，我们继续并尝试重新启动轨道
+                    }
+                }
+            } catch (e) {
+                this.log.warn(`could not restart track, muting instead`, {
+                    ...this.logContext,
+                    ...getLogContextFromTrack(track),
+                });
+                await track.mute();
+            }
+        }
+    };
+
+    private getPublicationForTrack(
+        track: LocalTrack | MediaStreamTrack,
+    ): LocalTrackPublication | undefined {
+        let publication: LocalTrackPublication | undefined;
+        this.trackPublications.forEach((pub) => {
+            const localTrack = pub.track;
+            if (!localTrack) {
+                return;
+            }
+
+            // 由于这个对象树，这看起来过于复杂
+            if (track instanceof MediaStreamTrack) {
+                if (localTrack instanceof LocalAudioTrack || localTrack instanceof LocalVideoTrack) {
+                    if (localTrack.mediaStreamTrack === track) {
+                        publication = <LocalTrackPublication>pub;
+                    }
+                }
+            } else if (track === localTrack) {
+                publication = <LocalTrackPublication>pub;
+            }
+        });
+        return publication;
     }
 }

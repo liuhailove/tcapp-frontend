@@ -14,6 +14,7 @@ import {
     VideoPresets43
 } from "../track/options";
 import {getReactNativeOs, isFireFox, isReactNative, isSVCCodec} from "../utils";
+import {Track} from "../track/Track";
 
 export function mediaTrackToLocalTrack(
     mediaStreamTrack: MediaStreamTrack,
@@ -182,6 +183,43 @@ export function computeVideoEncodings(
     return encodingsFromPresets(width, height, [original]);
 }
 
+export function computeTrackBackupEncodings(
+    track: LocalVideoTrack,
+    videoCodec: BackupVideoCodec,
+    opts: TrackPublishOptions,
+) {
+    // backupCodec should not be true anymore, default codec is set in LocalParticipant.publish
+    if (
+        !opts.backupCodec ||
+        opts.backupCodec === true ||
+        opts.backupCodec.codec === opts.videoCodec
+    ) {
+        // backup codec publishing is disabled
+        return;
+    }
+    if (videoCodec !== opts.backupCodec.codec) {
+        log.warn('requested a different codec than specified as backup', {
+            serverRequested: videoCodec,
+            backup: opts.backupCodec.codec,
+        });
+    }
+
+    opts.videoCodec = videoCodec;
+    // use backup encoding setting as videoEncoding for backup codec publishing
+    opts.videoEncoding = opts.backupCodec.encoding;
+
+    const settings = track.mediaStreamTrack.getSettings();
+    const width = settings.width ?? track.dimensions?.width;
+    const height = settings.height ?? track.dimensions?.height;
+
+    const encodings = computeVideoEncodings(
+        track.source === Track.Source.ScreenShare,
+        width,
+        height,
+        opts,
+    );
+    return encodings;
+}
 /**
  * 确定适当的编码
  * @internal

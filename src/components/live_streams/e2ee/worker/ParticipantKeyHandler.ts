@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events';
 import type TypedEventEmitter from 'typed-emitter';
 import { workerLogger } from '../../logger';
-import { KeyHandlerEvent, type ParticipantKeyHandlerCallbacks } from '../events';
+import { KeyHandlerEvent, type ParticipantKeyHandlerCallbacks } from '../e2eeEvents';
 import type { KeyProviderOptions, KeySet } from '../types';
 import { deriveKeys, importKey, ratchet } from '../utils';
 

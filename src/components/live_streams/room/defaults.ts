@@ -5,6 +5,8 @@ import {
     TrackPublishDefaults,
     VideoCaptureOptions, VideoPresets
 } from "./track/options";
+import type { InternalRoomConnectOptions, InternalRoomOptions } from '../options';
+import DefaultReconnectPolicy from "./DefaultReconnectPolicy";
 
 /**
  * 默认video编码

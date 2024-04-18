@@ -1,6 +1,6 @@
 import {KeyInfo} from "@/components/live/e2ee/types";
-import Participant from "@/components/live/room/participant/Participant";
 import {CryptorError} from "@/components/live/e2ee/errors";
+import Participant from "@/components/live_streams/room/participant/Participant";
 
 export enum KeyProviderEvent {
     SetKey = 'setKey',

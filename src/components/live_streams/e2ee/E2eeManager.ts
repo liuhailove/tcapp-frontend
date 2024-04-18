@@ -12,7 +12,7 @@ import type { VideoCodec } from '../room/track/options';
 import { mimeTypeToVideoCodecString } from '../room/track/utils';
 import type { BaseKeyProvider } from './KeyProvider';
 import { E2EE_FLAG } from './constants';
-import { type E2EEManagerCallbacks, EncryptionEvent, KeyProviderEvent } from './events';
+import { type E2EEManagerCallbacks, EncryptionEvent, KeyProviderEvent } from './e2eeEvents';
 import type {
   E2EEOptions,
   E2EEWorkerMessage,
@@ -29,6 +29,7 @@ import type {
 } from './types';
 import { isE2EESupported, isScriptTransformSupported } from './utils';
 import {EventEmitter} from "events";
+import {Encryption_Type} from "@/components/live_streams/protocol/tc_models_pb";
 
 /**
  * @experimental

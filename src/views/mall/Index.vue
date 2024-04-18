@@ -1,0 +1,3 @@
+<template>
+  Mall
+</template>

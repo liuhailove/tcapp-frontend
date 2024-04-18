@@ -44,3 +44,5 @@ class DefaultReconnectPolicy implements ReconnectPolicy {
         return retryDelay + Math.random() * 1_000;
     }
 }
+
+export default DefaultReconnectPolicy;

@@ -67,7 +67,7 @@ export default class LocalAudioTrack extends LocalTrack<Track.Kind.Audio> {
     /**
      * 静音
      */
-    async mute(): Promise<typeof LocalAudioTrack> {
+    async mute(): Promise<typeof this> {
         const unlock = await this.muteLock.lock();
         try {
             if (this.isMuted) {
@@ -91,7 +91,7 @@ export default class LocalAudioTrack extends LocalTrack<Track.Kind.Audio> {
     /**
      * 解除静音
      */
-    async unmute(): Promise<typeof LocalAudioTrack> {
+    async unmute(): Promise<typeof this> {
         const unlock = await this.muteLock.lock();
         try {
             if (!this.isMuted) {

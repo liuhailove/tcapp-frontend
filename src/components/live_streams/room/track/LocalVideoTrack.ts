@@ -87,7 +87,8 @@ export default class LocalVideoTrack extends LocalTrack<Track.Kind.Video> {
         mediaTrack: MediaStreamTrack,
         constraints?: MediaTrackConstraints,
         userProvidedTrack = true,
-        loggerOptions?: LoggerOptions,) {
+        loggerOptions?: LoggerOptions,
+        ) {
         super(mediaTrack, Track.Kind.Video, constraints, userProvidedTrack, loggerOptions);
         this.senderLock = new Mutex();
     }
@@ -154,7 +155,7 @@ export default class LocalVideoTrack extends LocalTrack<Track.Kind.Video> {
     /**
      * 静音
      */
-    async mute(): Promise<typeof LocalVideoTrack> {
+    async mute(): Promise<typeof this> {
         const unlock = await this.muteLock.lock();
         try {
             if (this.isMuted) {
@@ -177,7 +178,7 @@ export default class LocalVideoTrack extends LocalTrack<Track.Kind.Video> {
     /**
      * 解除静音
      */
-    async unmute(): Promise<typeof LocalVideoTrack> {
+    async unmute(): Promise<typeof this> {
         const unlock = await this.muteLock.lock();
         try {
             if (!this.isMuted) {

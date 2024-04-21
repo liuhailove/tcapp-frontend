@@ -9,48 +9,77 @@ import {
     ConnectionQuality,
     DataPacket_Kind,
     DisconnectReason,
+    ParticipantInfo,
+    ParticipantInfo_State,
     ParticipantPermission,
-    Room as RoomModel, ServerInfo,
+    Room as RoomModel,
+    ServerInfo,
+    SpeakerInfo,
     SubscriptionError,
+    TrackInfo,
+    TrackSource,
+    TrackType,
+    UserPacket,
 } from "../protocol/tc_models_pb";
 import RemoteTrack from "./track/RemoteTrack";
 import {TrackPublication} from "./track/TrackPublication";
 import {Track} from "./track/Track";
 import RemoteTrackPublication from "./track/RemoteTrackPublication";
-import RemoteParticipant from "@/components/live_streams/room/participant/RemoteParticipant";
-import Participant from "@/components/live_streams/room/participant/Participant";
-import LocalParticipant from "@/components/live_streams/room/participant/LocalParticipant";
-import LocalTrackPublication from "@/components/live_streams/room/track/LocalTrackPublication";
-import RTCEngine from "@/components/live_streams/room/RTCEngine";
+import RemoteParticipant from "./participant/RemoteParticipant";
+import Participant from "./participant/Participant";
+import LocalParticipant from "./participant/LocalParticipant";
+import LocalTrackPublication from "./track/LocalTrackPublication";
+import RTCEngine from "./RTCEngine";
 import {
     InternalRoomConnectOptions,
     InternalRoomOptions,
     RoomConnectOptions,
     RoomOptions
-} from "@/components/live_streams/options";
+} from "../options";
 import {
+    createDummyVideoStreamTrack,
     Future,
+    getEmptyAudioStreamTrack,
     isBrowserSupported,
     isCloud,
-    isReactNative, isWeb,
+    isReactNative,
+    isWeb,
     Mutex,
+    supportsSetSinkId,
     toHttpUrl,
+    unpackStreamId,
     unwrapConstraint
-} from "@/components/live_streams/room/utils";
-import {E2EEManager} from "@/components/live_streams/e2ee/E2eeManager";
+} from "./utils";
+import {E2EEManager} from "../e2ee/E2eeManager";
 import {
     audioDefaults,
     publishDefaults,
     roomOptionDefaults,
     videoDefaults
-} from "@/components/live_streams/room/defaults";
-import {EncryptionEvent} from "@/components/live_streams/e2ee";
-import {EngineEvent, RoomEvent} from "@/components/live_streams/room/TrackEvents";
-import DeviceManager from "@/components/live_streams/room/DeviceManager";
-import {RegionUrlProvider} from "@/components/live_streams/room/RegionUrlProvider";
-import {ConnectionError, ConnectionErrorReason, UnsupportedServer} from "@/components/live_streams/room/errors";
-import {JoinResponse} from "@/components/live_streams/protocol/tc_rtc_pb";
-import {join} from "typedoc/dist/lib/output/themes/lib";
+} from "./defaults";
+import {EncryptionEvent} from "../e2ee";
+import {EngineEvent, ParticipantEvent, RoomEvent, TrackEvent} from "./TrackEvents";
+import DeviceManager from "./DeviceManager";
+import {RegionUrlProvider} from "./RegionUrlProvider";
+import {ConnectionError, ConnectionErrorReason, UnsupportedServer} from "./errors";
+import {
+    ConnectionQualityUpdate,
+    JoinResponse,
+    LeaveRequest,
+    SimulateScenario,
+    StreamStateUpdate,
+    SubscriptionPermissionUpdate,
+    SubscriptionResponse
+} from "../protocol/tc_rtc_pb";
+import {getBrowser} from "../utils/browserParser";
+import {getNewAudioContext, sourceToKind} from "./track/utils.ts";
+import CriticalTimers from "./timers.ts";
+import {TrackProcessor} from "./track/processor/types.ts";
+import LocalAudioTrack from "./track/LocalAudioTrack.ts";
+import {SimulationOptions} from "./types.ts";
+import {protoInt64} from "@bufbuild/protobuf";
+import LocalVideoTrack from "./track/LocalVideoTrack.ts";
+import {AdaptiveStreamSettings} from "./track/types.ts";
 
 export enum ConnectionState {
     Disconnected = 'disconnected',
@@ -354,7 +383,7 @@ class Room extends (EventEmitter as new() => TypedEventEmitter<RoomEventCallback
         this.engine = new RTCEngine(this.options);
 
         this.engine
-            .on(EngineEvent.ParticipantUpdate, this.handleParticipantUpdate)
+            .on(EngineEvent.ParticipantUpdate, this.handleParticipantUpdates)
             .on(EngineEvent.RoomUpdate, this.handleRoomUpdate)
             .on(EngineEvent.SpeakersChanged, this.handleSpeakersChanged)
             .on(EngineEvent.StreamStateChanged, this.handleStreamStateUpdate)
@@ -654,7 +683,7 @@ class Room extends (EventEmitter as new() => TypedEventEmitter<RoomEventCallback
         }
 
         // 填充远程参与者，这些不应触发新事件
-        this.handleParticipantUpdate([pi, ...joinResponse.otherParticipants]);
+        this.handleParticipantUpdates([pi, ...joinResponse.otherParticipants]);
 
         if (joinResponse.room) {
             this.handleRoomUpdate(joinResponse.room);
@@ -682,84 +711,1527 @@ class Room extends (EventEmitter as new() => TypedEventEmitter<RoomEventCallback
             // 如果之前断开连接，则创建引擎
             this.maybeCreateEngine();
         }
-        if(this.regionUrlProvider?.isCloud()){
+        if (this.regionUrlProvider?.isCloud()) {
             this.engine.setRegionUrlProvider(this.regionUrlProvider);
         }
 
         this.acquireAudioContext();
 
-        this.connOptions={...roomOptionDefaults,...opts} as InternalRoomConnectOptions;
+        this.connOptions = {...roomOptionDefaults, ...opts} as InternalRoomConnectOptions;
 
-        if(this.connOptions.rtcConfig){
-            this.engine.rtcConfig=this.connOptions.rtcConfig;
+        if (this.connOptions.rtcConfig) {
+            this.engine.rtcConfig = this.connOptions.rtcConfig;
         }
-        if(this.connOptions.peerConnectionTimeout){
-            this.engine.peerConnectionTimeout=this.connOptions.peerConnectionTimeout;
+        if (this.connOptions.peerConnectionTimeout) {
+            this.engine.peerConnectionTimeout = this.connOptions.peerConnectionTimeout;
         }
 
-        try{
-            const joinResponse=await this.connectSignal(
-              url,
-              token,
-              this.engine,
-              this.connOptions,
-              this.options,
-              abortController,
+        try {
+            const joinResponse = await this.connectSignal(
+                url,
+                token,
+                this.engine,
+                this.connOptions,
+                this.options,
+                abortController,
             );
 
             this.applyJoinResponse(joinResponse);
             // 转发本地参与者更改的元数据
             this.setupLocalParticipantEvents();
             this.emit(RoomEvent.SignalConnected);
-        }catch (err){
+        } catch (err) {
             await this.engine.close();
             this.recreateEngine();
-            const resultingError=new ConnectionError(`could not establish signal connection`);
-            if(err instanceof Error){
-                resultingError.message=`${resultingError.message}: ${err.message}`;
+            const resultingError = new ConnectionError(`could not establish signal connection`);
+            if (err instanceof Error) {
+                resultingError.message = `${resultingError.message}: ${err.message}`;
             }
-            if(err instanceof ConnectionError){
-                resultingError.reason=err.reason;
-                resultingError.status=err.status;
+            if (err instanceof ConnectionError) {
+                resultingError.reason = err.reason;
+                resultingError.status = err.status;
             }
-            this.log.debug(`error trying to establish signal connection`,{
+            this.log.debug(`error trying to establish signal connection`, {
                 ...this.logContext,
-                error:err,
+                error: err,
             });
             throw resultingError;
         }
 
-        if(abortController.signal.aborted){
+        if (abortController.signal.aborted) {
             await this.engine.close();
             this.recreateEngine();
             throw new ConnectionError(`Connection attempt aborted`);
         }
 
-        try{
+        try {
             await this.engine.waitForPCInitialConnection(
                 this.connOptions.peerConnectionTimeout,
                 abortController,
             );
-        }catch (e){
+        } catch (e) {
             await this.engine.close();
             this.recreateEngine();
             throw e;
         }
 
         // 还挂钩卸载事件
-        if(isWeb() && this.options.disconnectOnPageLeave){
+        if (isWeb() && this.options.disconnectOnPageLeave) {
             // 捕获“pagehide”和“beforeunload”以捕获最广泛的浏览器行为
-            window.addEventListener('pagehide',this.onPageLeave);
-            window.addEventListener('beforeunload',this.onPageLeave);
+            window.addEventListener('pagehide', this.onPageLeave);
+            window.addEventListener('beforeunload', this.onPageLeave);
         }
-        if(isWeb()){
-            document.addEventListener('freeze',thi.onPageLeave);
-            navigator.mediaDevices?.addEventListener('devicechange',this.handleDeviceChange);
+        if (isWeb()) {
+            document.addEventListener('freeze', this.onPageLeave);
+            navigator.mediaDevices?.addEventListener('devicechange', this.handleDeviceChange);
         }
         this.setAndEmitConnectionState(ConnectionState.Connected);
         this.emit(RoomEvent.Connected);
         this.registerConnectionReconcile();
     }
+
+    /**
+     * 断开房间连接，发出 [[RoomEvent.Disconnected]]
+     */
+    disconnect = async (stopTracks = true) => {
+        const unlock = await this.disconnectLock.lock();
+        try {
+            if (this.state === ConnectionState.Disconnected) {
+                this.log.debug('already disconnected', this.logContext);
+                return;
+            }
+            this.log.info('disconnect from room', {
+                ...this.logContext,
+            });
+            if (
+                this.state === ConnectionState.Connecting ||
+                this.state === ConnectionState.Reconnecting ||
+                this.isResuming
+            ) {
+                // 尝试中止挂起的连接尝试
+                this.log.warn('abort connection attempt', this.logContext);
+                this.abortController?.abort();
+                // 如果中止控制器无法取消连接尝试，则显式拒绝连接承诺
+                this.connectFuture?.reject?.(new ConnectionError('Client initiated disconnect'));
+                this.connectFuture = undefined;
+            }
+            // 发送离开通知
+            if (!this.engine?.client.isDisconnected) {
+                await this.engine.client.sendLeave();
+            }
+            // 关闭引擎（同时关闭客户端）
+            if (this.engine) {
+                await this.engine.close();
+            }
+            this.handleDisconnect(stopTracks, DisconnectReason.CLIENT_INITIATED);
+            /* @ts-ignore */
+            this.engine = undefined;
+        } finally {
+            unlock();
+        }
+    };
+
+    /**
+     * 通过身份检索参与者
+     * @param identity
+     */
+    getParticipantByIdentity(identity: string): Participant | undefined {
+        if (this.localParticipant.identity === identity) {
+            return this.localParticipant;
+        }
+        return this.remoteParticipants.get(identity);
+    }
+
+    private clearConnectionFutures() {
+        this.connectFuture = undefined;
+    }
+
+
+    /**
+     * @internal 测试使用
+     */
+    async simulateScenario(scenario: SimulateScenario, arg?: any) {
+        let postAction = () => {
+        };
+        let req: SimulateScenario | undefined;
+        switch (scenario) {
+            case 'signal-reconnect':
+                // @ts-expect-error function is private
+                await this.engine.client.handleOnClose('simulate disconnect');
+                break;
+            case 'speaker':
+                req = new SimulateScenario({
+                    scenario: {
+                        case: 'speakerUpdate',
+                        value: 3,
+                    },
+                });
+                break;
+            case 'node-failure':
+                req = new SimulateScenario({
+                    scenario: {
+                        case: 'speakerUpdate',
+                        value: 3,
+                    },
+                });
+                break;
+            case 'server-leave':
+                req = new SimulateScenario({
+                    scenario: {
+                        case: 'serverLeave',
+                        value: true,
+                    },
+                });
+                break;
+            case 'migration':
+                req = new SimulateScenario({
+                    scenario: {
+                        case: 'migration',
+                        value: true,
+                    },
+                });
+                break;
+            case 'resume-reconnect':
+                this.engine.failNext();
+                // @ts-expect-error function is private
+                await this.engine.client.handleOnClose('simulate resume-disconnect');
+                break;
+            case 'disconnect-signal-on-resume':
+                postAction = async () => {
+                    // @ts-expect-error function is private
+                    await this.engine.client.handleOnClose('simulate resume-disconnect');
+                };
+                req = new SimulateScenario({
+                    scenario: {
+                        case: 'disconnectSignalOnResume',
+                        value: true,
+                    },
+                });
+                break;
+            case 'disconnect-signal-on-resume-no-message':
+                postAction = async () => {
+                    // @ts-expect-error function is private
+                    await this.engine.client.handleOnClose('simulate resume-disconnect');
+                };
+                req = new SimulateScenario({
+                    scenario: {
+                        case: 'disconnectSignalOnResumeNoMessages',
+                        value: true,
+                    },
+                });
+                break;
+            case 'full-reconnect':
+                this.engine.fullReconnectOnNext = true;
+                // @ts-expect-error function is private
+                await this.engine.client.handleOnClose('simulate full-reconnect');
+                break;
+            case 'force-tcp':
+            case 'force-tls':
+                req = new SimulateScenario({
+                    scenario: {
+                        case: 'switchCandidateProtocol',
+                        value: scenario === 'force-tls' ? 2 : 1,
+                    },
+                });
+                postAction = async () => {
+                    const onLeave = this.engine.client.onLeave;
+                    if (onLeave) {
+                        onLeave(
+                            new LeaveRequest({
+                                reason: DisconnectReason.CLIENT_INITIATED,
+                                canReconnect: true,
+                            }),
+                        );
+                    }
+                };
+                break;
+            case 'subscriber-bandwidth':
+                if (arg === undefined || typeof arg !== 'number') {
+                    throw new Error('subscriber-bandwidth requires a number as argument');
+                }
+                req = new SimulateScenario({
+                    scenario: {
+                        case: 'subscriberBandwidth',
+                        value: BigInt(arg),
+                    },
+                });
+                break;
+
+            default:
+        }
+        if (req) {
+            await this.engine.client.sendSimulateScenario(req);
+            await postAction();
+        }
+    }
+
+    /**
+     * 离开页面处理
+     */
+    private onPageLeave = async () => {
+        this.log.info('Page leave detected, disconnecting', this.logContext);
+        await this.disconnect();
+    };
+
+    /**
+     * 浏览器对于音频播放有不同的政策。 大多数需要某种形式的用户交互（单击/点击/等）。
+     * 在这些情况下，音频将保持静音，直到单击/点击触发以下其中一项
+     * - `开始音频`
+     * - `getUserMedia`
+     */
+    startAudio = async () => {
+        const elements: Array<HTMLMediaElement> = [];
+        const browser = getBrowser();
+        if (browser && browser.os === 'iOS') {
+            /**
+             * iOS 会阻止音频元素播放，如果
+             * - 用户没有自己发布音频并且
+             * - 没有其他音频源正在播放
+             *
+             * 作为解决方法，我们创建一个带有空轨道的音频元素，以便
+             * 始终播放无声音频
+             */
+            const audioId = 'tc-dummy-audio-el';
+            let dummyAudioEl = document.getElementById(audioId) as HTMLAudioElement | null;
+            if (!dummyAudioEl) {
+                dummyAudioEl = document.createElement('audio');
+                dummyAudioEl.id = audioId;
+                dummyAudioEl.autoplay = true;
+                dummyAudioEl.hidden = true;
+                const track = getEmptyAudioStreamTrack();
+                track.enabled = true;
+                const stream = new MediaStream([track]);
+                dummyAudioEl.srcObject = stream;
+                document.addEventListener('visibilitychange', () => {
+                    if (!dummyAudioEl) {
+                        return;
+                    }
+                    // 在页面隐藏时将 srcObject 设置为 null 以防止锁定屏幕控件显示出来
+                    dummyAudioEl.srcObject = document.hidden ? null : stream;
+                    if (!document.hidden) {
+                        this.log.debug(
+                            'page visible again, triggering startAudio to resume playback and update playback status',
+                            this.logContext,
+                        );
+                        this.startAudio();
+                    }
+                });
+                document.body.append(dummyAudioEl);
+                this.once(RoomEvent.Disconnected, () => {
+                    dummyAudioEl?.remove();
+                    dummyAudioEl = null;
+                });
+            }
+            elements.push(dummyAudioEl);
+        }
+
+        this.remoteParticipants.forEach((p) => {
+            p.audioTrackPublications.forEach((t) => {
+                if (t.track) {
+                    t.track.attachedElements.forEach((e) => {
+                        elements.push(e);
+                    });
+                }
+            });
+        });
+
+        try {
+            await Promise.all([
+                this.acquireAudioContext(),
+                ...elements.map((e) => {
+                    e.muted = false;
+                    return e.play();
+                }),
+            ]);
+            this.handleAudioPlaybackStarted();
+        } catch (err) {
+            this.handleAudioPlaybackFailed(err);
+            throw err;
+        }
+    };
+
+    startVideo = async () => {
+        const elements: HTMLMediaElement[] = [];
+        for (const p of this.remoteParticipants.values()) {
+            p.videoTrackPublications.forEach((tr) => {
+                tr.track?.attachedElements.forEach((el) => {
+                    if (!elements.includes(el)) {
+                        elements.push(el);
+                    }
+                });
+            });
+        }
+
+        await Promise.all(elements.map((el) => el.play()))
+            .then(() => {
+                this.handleVideoPlaybackStarted();
+            })
+            .catch((e) => {
+                if (e.name === 'NotAllowedError') {
+                    this.handleVideoPlaybackFailed();
+                } else {
+                    this.log.warn(
+                        'Resuming video playback failed, make sure you call `startVideo` directly in a user gesture handler',
+                        this.logContext,
+                    );
+                }
+            });
+
+    };
+
+    /**
+     * 如果启用音频播放则返回 true
+     */
+    get canPlaybackAudio(): boolean {
+        return this.audioEnabled;
+    }
+
+    /**
+     * 如果启用视频播放则返回 true
+     */
+    get canPlaybackVideo(): boolean {
+        return !this.isVideoPlaybackBlocked;
+    }
+
+    getActiveDevice(kind: MediaDeviceKind): string | undefined {
+        return this.localParticipant.activeDeviceMap.get(kind);
+    }
+
+    /**
+     * 将此房间中使用的所有活动设备切换到给定设备。
+     *
+     * 注意：某些浏览器不支持设置 AudioOutput。 请参阅[setSinkId](https://developer.mozilla.org/en-US/docs/Web/API/HTMLMediaElement/setSinkId#browser_compatibility)
+     *
+     * @param kind 使用 `videoinput` 作为摄像机轨道，
+     * 用于麦克风轨道的“音频输入”，
+     * `audiooutput` 为所有传入音轨设置扬声器
+     * @param deviceId
+     */
+    async switchActiveDevice(kind: MediaDeviceKind, deviceId: string, exact: boolean = false) {
+        let deviceHasChanged = false;
+        let success = true;
+        const deviceConstraint = exact ? {exact: deviceId} : deviceId;
+        if (kind === 'audioinput') {
+            const prevDeviceId = this.options.audioCaptureDefaults!.deviceId;
+            this.options.audioCaptureDefaults!.deviceId = deviceConstraint;
+            deviceHasChanged = prevDeviceId !== deviceConstraint;
+            const tracks = Array.from(this.localParticipant.audioTrackPublications.values()).filter(
+                (track) => track.source === Track.Source.Microphone,
+            );
+            try {
+                success = (
+                    await Promise.all(tracks.map((t) => t.audioTrack?.setDeviceId(deviceConstraint)))
+                ).every((val) => val === true);
+            } catch (e) {
+                this.options.audioCaptureDefaults!.deviceId = prevDeviceId;
+                throw e;
+            }
+        } else if (kind === 'videoinput') {
+            const prevDeviceId = this.options.videoCaptureDefaults!.deviceId;
+            this.options.videoCaptureDefaults!.deviceId = deviceConstraint;
+            deviceHasChanged = prevDeviceId !== deviceConstraint;
+            const tracks = Array.from(this.localParticipant.videoTrackPublications.values()).filter(
+                (track) => track.source === Track.Source.Camera,
+            );
+            try {
+                success = (
+                    await Promise.all(tracks.map((t) => t.videoTrack?.setDeviceId(deviceConstraint)))
+                ).every((val) => val === true);
+            } catch (e) {
+                this.options.videoCaptureDefaults!.deviceId = prevDeviceId;
+                throw e;
+            }
+        } else if (kind === 'audiooutput') {
+            if (
+                (!supportsSetSinkId() && !this.options.webAudioMix) ||
+                (this.options.webAudioMix && this.audioContext && !('setSinkId' in this.audioContext))
+            ) {
+                throw new Error('cannot switch audio output, setSinkId not supported');
+            }
+            if (this.options.webAudioMix) {
+                // 为网络音频输出设置“default”不起作用，因此我们需要先规范化 id
+                deviceId =
+                    (await DeviceManager.getInstance().normalizeDeviceId('audiooutput', deviceId)) ?? '';
+            }
+            this.options.audioOutput ??= {};
+            const prevDeviceId = this.options.audioOutput.deviceId;
+            this.options.audioOutput.deviceId = deviceId;
+            deviceHasChanged = prevDeviceId !== deviceConstraint;
+
+            try {
+                if (this.options.webAudioMix) {
+                    // @ts-expect-error setSinkId is not yet in the typescript type of AudioContext
+                    this.audioContext?.setSinkId(deviceId);
+                } else {
+                    await Promise.all(
+                        Array.from(this.remoteParticipants.values()).map((p) => p.setAudioOutput({deviceId})),
+                    );
+                }
+            } catch (e) {
+                this.options.audioOutput.deviceId = prevDeviceId;
+                throw e;
+            }
+        }
+        if (deviceHasChanged && success) {
+            this.localParticipant.activeDeviceMap.set(kind, deviceId);
+            this.emit(RoomEvent.ActiveDeviceChanged, kind, deviceId);
+        }
+
+        return success;
+    }
+
+    private setupLocalParticipantEvents() {
+        this.localParticipant
+            .on(ParticipantEvent.ParticipantMetadataChanged, this.onLocalParticipantMetadataChanged)
+            .on(ParticipantEvent.ParticipantNameChanged, this.onLocalParticipantNameChanged)
+            .on(ParticipantEvent.TrackMuted, this.onLocalTrackMuted)
+            .on(ParticipantEvent.TrackUnmuted, this.onLocalTrackUnmuted)
+            .on(ParticipantEvent.LocalTrackPublished, this.onLocalTrackPublished)
+            .on(ParticipantEvent.LocalTrackUnpublished, this.onLocalTrackUnpublished)
+            .on(ParticipantEvent.ConnectionQualityChanged, this.onLocalConnectionQualityChanged)
+            .on(ParticipantEvent.MediaDevicesError, this.onMediaDevicesError)
+            .on(ParticipantEvent.AudioStreamAcquired, this.startAudio)
+            .on(
+                ParticipantEvent.ParticipantPermissionsChanged,
+                this.onLocalParticipantPermissionsChanged,
+            );
+    }
+
+    private recreateEngine() {
+        this.engine?.close();
+        /* @ts-ignore */
+        this.engine = undefined;
+        this.isResuming = false;
+
+        // 清除现有的远程参与者，因为他们可能已附加
+        // 旧引擎
+        this.remoteParticipants.clear();
+        this.sidToIdentity.clear();
+        this.bufferedEvents = [];
+        this.maybeCreateEngine();
+    }
+
+    private onTrackAdded(
+        mediaTrack: MediaStreamTrack,
+        stream: MediaStream,
+        receiver?: RTCRtpReceiver,
+    ) {
+        // 连接时不要触发 onSubscribed
+        // 一旦在offer上调用 setRemoteDescription，WebRTC 就会触发 onTrack，此时 ICE 连接尚未建立，因此技术上未订阅该轨道。
+        // 我们将推迟这些事件，直到房间连接或最终断开连接。
+        if (this.state === ConnectionState.Connecting || this.state === ConnectionState.Reconnecting) {
+            const reconnectedHandler = () => {
+                this.onTrackAdded(mediaTrack, stream, receiver);
+                cleanup();
+            };
+            const cleanup = () => {
+                this.off(RoomEvent.Reconnected, reconnectedHandler);
+                this.off(RoomEvent.Connected, reconnectedHandler);
+                this.off(RoomEvent.Disconnected, cleanup);
+            };
+            this.once(RoomEvent.Reconnected, reconnectedHandler);
+            this.once(RoomEvent.Connected, reconnectedHandler);
+            this.once(RoomEvent.Disconnected, cleanup);
+            return;
+        }
+        if (this.state === ConnectionState.Disconnected) {
+            this.log.warn('skipping incoming track after Room disconnected', this.logContext);
+            return;
+        }
+        const parts = unpackStreamId(stream.id);
+        const participantSid = parts[0];
+        let streamId = parts[1];
+        let trackId = mediaTrack.id;
+        // firefox 将获取streamId (pID|trackId) 而不是 (pID|streamId)，因为它不支持按流同步轨道
+        // 并生成自己的轨道 id，而不是从 sdp 轨道 id 推断。
+        if (streamId && streamId.startsWith('TR')) {
+            trackId = streamId;
+        }
+
+        if (participantSid === this.localParticipant.sid) {
+            this.log.warn('tried to create RemoteParticipant for local participant', this.logContext);
+            return;
+        }
+
+        const participant = Array.from(this.remoteParticipants.values()).find(
+            (p) => p.sid === participantSid,
+        ) as RemoteParticipant | undefined;
+
+        if (!participant) {
+            this.log.error(
+                `Tried to add a track for a participant, that's not present. Sid: ${participantSid}`,
+                this.logContext,
+            );
+            return;
+        }
+
+        let adaptiveStreamSettings: AdaptiveStreamSettings | undefined;
+        if (this.options.adaptiveStream) {
+            if (typeof this.options.adaptiveStream === 'object') {
+                adaptiveStreamSettings = this.options.adaptiveStream;
+            } else {
+                adaptiveStreamSettings = {};
+            }
+        }
+        participant.addSubscribedMediaTrack(
+            mediaTrack,
+            trackId,
+            stream,
+            receiver,
+            adaptiveStreamSettings,
+        );
+    }
+
+
+    /**
+     * 处理重启
+     */
+    private handleRestarting = () => {
+        this.clearConnectionReconcile();
+        // 如果我们从恢复到完全重新连接，请确保将其反映在 isResuming 标志上
+        this.isResuming = false;
+        // 还解除现有参与者和现有订阅
+        for (const p of this.remoteParticipants.values()) {
+            this.handleParticipantDisconnected(p.identity, p);
+        }
+
+        if (this.setAndEmitConnectionState(ConnectionState.Reconnecting)) {
+            this.emit(RoomEvent.Reconnecting);
+        }
+    };
+
+    /**
+     * 处理信令重启
+     * @param joinResponse 加入响应
+     */
+    private handleSignalRestarted = async (joinResponse: JoinResponse) => {
+        this.log.debug(`signal reconnected to server, region ${joinResponse.serverRegion}`, {
+            ...this.logContext,
+            region: joinResponse.serverRegion,
+        });
+        this.bufferedEvents = [];
+
+        this.applyJoinResponse(joinResponse);
+
+        try {
+            // 取消发布并重新发布曲目
+            await this.localParticipant.republishAllTracks(undefined, true);
+        } catch (error) {
+            this.log.error('error trying to re-publish tracks after reconnection', {
+                ...this.logContext,
+                error
+            });
+        }
+
+        try {
+            await this.engine.waitForRestarted();
+            this.log.debug(`fully reconnected to server`, {
+                ...this.logContext,
+                region: joinResponse.serverRegion,
+            });
+        } catch {
+            // 重连失败，handleDisconnect已经被调用，直接返回这里
+            return;
+        }
+        this.setAndEmitConnectionState(ConnectionState.Connected);
+        this.emit(RoomEvent.Reconnected);
+        this.registerConnectionReconcile();
+        this.emitBufferedEvents();
+    };
+
+    /**
+     * 处理断开连接
+     * @param shouldStopTracks 是否停止音轨
+     * @param reason 断开原因
+     */
+    private handleDisconnect(shouldStopTracks = true, reason?: DisconnectReason) {
+        this.clearConnectionReconcile();
+        this.isResuming = false;
+        this.bufferedEvents = [];
+        if (this.state === ConnectionState.Disconnected) {
+            return;
+        }
+
+        this.regionUrl = undefined;
+
+        try {
+            this.remoteParticipants.forEach((p) => {
+                p.trackPublications.forEach((pub) => {
+                    p.unpublishTrack(pub.trackSid)
+                });
+            });
+
+            this.localParticipant.trackPublications.forEach((pub) => {
+                if (pub.track) {
+                    this.localParticipant.unpublishTrack(pub.track, shouldStopTracks);
+                }
+                if (shouldStopTracks) {
+                    pub.track?.detach();
+                    pub.track?.stop();
+                }
+            });
+
+            this.localParticipant
+                .off(ParticipantEvent.ParticipantMetadataChanged, this.onLocalParticipantMetadataChanged)
+                .off(ParticipantEvent.ParticipantNameChanged, this.onLocalParticipantNameChanged)
+                .off(ParticipantEvent.TrackMuted, this.onLocalTrackMuted)
+                .off(ParticipantEvent.LocalTrackPublished, this.onLocalTrackPublished)
+                .off(ParticipantEvent.LocalTrackUnpublished, this.onLocalTrackUnpublished)
+                .off(ParticipantEvent.ConnectionQualityChanged, this.onLocalConnectionQualityChanged)
+                .off(ParticipantEvent.MediaDevicesError, this.onMediaDevicesError)
+                .off(ParticipantEvent.AudioStreamAcquired, this.startAudio)
+                .off(
+                    ParticipantEvent.ParticipantPermissionsChanged,
+                    this.onLocalParticipantPermissionsChanged,
+                );
+
+            this.localParticipant.trackPublications.clear();
+            this.localParticipant.videoTrackPublications.clear();
+            this.localParticipant.audioTrackPublications.clear();
+
+            this.remoteParticipants.clear();
+            this.sidToIdentity.clear();
+            this.activeSpeakers = [];
+            if (this.audioContext && typeof this.options.webAudioMix === 'boolean') {
+                this.audioContext.close();
+                this.audioContext = undefined;
+            }
+            if (isWeb()) {
+                window.removeEventListener('beforeunload', this.onPageLeave);
+                window.removeEventListener('pagehide', this.onPageLeave);
+                window.removeEventListener('freeze', this.onPageLeave);
+                navigator.mediaDevices?.removeEventListener('devicechange', this.handleDeviceChange);
+            }
+        } finally {
+            this.setAndEmitConnectionState(ConnectionState.Disconnected);
+            this.emit(RoomEvent.Disconnected, reason);
+        }
+    }
+
+    /**
+     * 处理参与者更新
+     * @param participantInfos 参与者信息
+     */
+    private handleParticipantUpdates = (participantInfos: ParticipantInfo[]) => {
+        // 处理参与者状态的变化，并发送事件
+        participantInfos.forEach((info) => {
+            if (info.identity === this.localParticipant.identity) {
+                this.localParticipant.updateInfo(info);
+                return;
+            }
+
+            // TcApp 服务器在 1.5.2 之前的版本中不会在断开连接更新中发送身份信息
+            // 所以我们尝试手动将空身份映射到已知的 sID
+            if (info.identity === '') {
+                info.identity = this.sidToIdentity.get(info.sid) ?? '';
+            }
+
+            let remoteParticipant = this.remoteParticipants.get(info.identity);
+
+            // 断开连接时，发送更新
+            if (info.state === ParticipantInfo_State.DISCONNECTED) {
+                this.handleParticipantDisconnected(info.identity, remoteParticipant);
+            } else {
+                // 如果不存在则创建参与者
+                remoteParticipant = this.getOrCreateParticipant(info.identity, info);
+            }
+        });
+
+    };
+
+    /**
+     * 处理参与者断开连接
+     * @param identity 参与者唯一标识
+     * @param participant 参与者
+     */
+    private handleParticipantDisconnected(identity: string, participant?: RemoteParticipant) {
+        // 删除并发送事件
+        this.remoteParticipants.delete(identity);
+        if (!participant) {
+            return;
+        }
+
+        participant.trackPublications.forEach((publication) => {
+            participant.unpublishTrack(publication.trackSid, true);
+        });
+        this.emit(RoomEvent.ParticipantDisconnected, participant);
+    }
+
+    // 仅当发言者顺序发生变化时才发送更新
+    private handleActiveSpeakersUpdate = (speakers: SpeakerInfo[]) => {
+        const activeSpeakers: Participant[] = [];
+        const seenSids: any = {};
+        speakers.forEach((speaker) => {
+            seenSids[speaker.sid] = true;
+            if (speaker.sid === this.localParticipant.sid) {
+                this.localParticipant.audioLevel = speaker.level;
+                this.localParticipant.setIsSpeaking(true);
+                activeSpeakers.push(this.localParticipant);
+            } else {
+                const p = this.getRemoteParticipantBySid(speaker.sid);
+                if (p) {
+                    p.audioLevel = speaker.level;
+                    p.setIsSpeaking(true);
+                    activeSpeakers.push(p);
+                }
+            }
+        });
+        if (!seenSids[this.localParticipant.sid]) {
+            this.localParticipant.audioLevel = 0;
+            this.localParticipant.setIsSpeaking(false);
+        }
+        this.remoteParticipants.forEach((p) => {
+            if (!seenSids[p.sid]) {
+                p.audioLevel = 0;
+                p.setIsSpeaking(false);
+            }
+        });
+
+        this.activeSpeakers = activeSpeakers;
+        this.emitWhenConnected(RoomEvent.ActiveSpeakersChanged, activeSpeakers);
+    };
+
+    // 处理已更改发言人的列表
+    private handleSpeakersChanged = (speakerUpdates: SpeakerInfo[]) => {
+        const lastSpeakers = new Map<string, Participant>();
+        this.activeSpeakers.forEach((p) => {
+            lastSpeakers.set(p.sid, p);
+        });
+        speakerUpdates.forEach((speaker) => {
+            let p: Participant | undefined = this.getRemoteParticipantBySid(speaker.sid);
+            if (speaker.sid === this.localParticipant.sid) {
+                p = this.localParticipant;
+            }
+            if (!p) {
+                return;
+            }
+            p.audioLevel = speaker.level;
+            p.setIsSpeaking(speaker.active);
+
+            if (speaker.active) {
+                lastSpeakers.set(speaker.sid, p);
+            } else {
+                lastSpeakers.delete(speaker.sid);
+            }
+        });
+        const activeSpeakers = Array.from(lastSpeakers.values());
+        activeSpeakers.sort((a, b) => b.audioLevel - a.audioLevel);
+        this.activeSpeakers = activeSpeakers;
+        this.emitWhenConnected(RoomEvent.ActiveSpeakersChanged, activeSpeakers);
+    };
+
+    /**
+     * 处理流状态更新
+     */
+    private handleStreamStateUpdate = (streamStateUpdate: StreamStateUpdate) => {
+        streamStateUpdate.streamStates.forEach((streamState) => {
+            const participant = this.getRemoteParticipantBySid(streamState.participantSid);
+            if (!participant) {
+                return;
+            }
+            const pub = participant.getTrackPublicationBySid(streamState.trackSid);
+            if (!pub || !pub.track) {
+                return;
+            }
+            pub.track.streamState = Track.streamStateFromProto(streamState.state);
+            participant.emit(ParticipantEvent.TrackStreamStateChanged, pub, pub.track.streamStates);
+            this.emitWhenConnected(
+                RoomEvent.TrackStreamStateChanged,
+                pub,
+                pub.track.streamState,
+                participant,
+            );
+        });
+    };
+
+    /**
+     * 处理订阅权限更新
+     * @param update 更新的权限对象
+     */
+    private handleSubscriptionPermissionUpdate = (update: SubscriptionPermissionUpdate) => {
+        const participant = this.getRemoteParticipantBySid(update.participantSid);
+        if (!participant) {
+            return;
+        }
+        const pub = participant.getTrackPublicationBySid(update.trackSid);
+        if (!pub) {
+            return;
+        }
+
+        pub.setAllowed(update.allowed);
+    };
+
+    /**
+     * 处理订阅错误
+     * @param update 订阅响应
+     */
+    private handleSubscriptionError = (update: SubscriptionResponse) => {
+        const participant = Array.from(this.remoteParticipants.values()).find((p) => {
+            p.trackPublications.has(update.trackSid);
+        });
+        if (!participant) {
+            return;
+        }
+        const pub = participant.getTrackPublicationBySid(update.trackSid);
+        if (!pub) {
+            return;
+        }
+        pub.setSubscriptionError(update.err);
+    };
+
+    /**
+     * 处理数据包
+     * @param userPacket 用户数据包
+     * @param kind 数据包类型
+     */
+    private handleDataPacket = (userPacket: UserPacket, kind: DataPacket_Kind) => {
+        // 查找参与者
+        const participant = this.remoteParticipants.get(userPacket.participantIdentity);
+
+        this.emit(RoomEvent.DataReceived, userPacket.payload, participant, kind, userPacket.topic);
+
+        // 也向参与者发出
+        participant?.emit(ParticipantEvent.DataReceived, userPacket.payload, kind);
+    };
+
+    /**
+     * 处理音频播放开始
+     */
+    private handleAudioPlaybackStarted = () => {
+        if (this.canPlaybackAudio) {
+            return;
+        }
+        this.audioEnabled = true;
+        this.emit(RoomEvent.AudioPlaybackStatusChanged, true);
+    };
+
+    /**
+     * 处理播放音频失败
+     */
+    private handleAudioPlaybackFailed = (e: any) => {
+        this.log.warn('could not playback audio', {...this.logContext, error: e});
+        if (!this.canPlaybackAudio) {
+            return;
+        }
+        this.audioEnabled = false;
+        this.emit(RoomEvent.AudioPlaybackStatusChanged, false);
+    };
+
+    /**
+     * 处理开始播放视频
+     */
+    private handleVideoPlaybackStarted = () => {
+        if (this.isVideoPlaybackBlocked) {
+            this.isVideoPlaybackBlocked = false;
+            this.emit(RoomEvent.VideoPlaybackStatusChanged, true);
+        }
+    };
+
+    /**
+     * 处理视频播放失败
+     */
+    private handleVideoPlaybackFailed = () => {
+        if (!this.isVideoPlaybackBlocked) {
+            this.isVideoPlaybackBlocked = true;
+            this.emit(RoomEvent.VideoPlaybackStatusChanged, false);
+        }
+    }
+
+    /**
+     * 处理设备改变
+     */
+    private handleDeviceChange = async () => {
+        this.emit(RoomEvent.MediaDevicesChanged);
+    };
+
+    /**
+     * 处理房间更新
+     */
+    private handleRoomUpdate = (room: RoomModel) => {
+        const oldRoom = this.roomInfo;
+        this.roomInfo = room;
+        if (oldRoom && oldRoom.metadata !== room.metadata) {
+            this.emitWhenConnected(RoomEvent.RoomMetadataChanged, room.metadata);
+        }
+        if (oldRoom?.activeRecording !== room.activeRecording) {
+            this.emitWhenConnected(RoomEvent.RecordingStatusChanged, room.activeRecording);
+        }
+    };
+
+    /**
+     * 处理连接质量更新
+     * @param update 网络质量
+     */
+    private handleConnectionQualityUpdate = (update: ConnectionQualityUpdate) => {
+        update.updates.forEach((info) => {
+            if (info.participantSid === this.localParticipant.sid) {
+                this.localParticipant.setConnectionQuality(info.quality);
+                return;
+            }
+            const participant = this.getRemoteParticipantBySid(info.participantSid);
+            if (participant) {
+                participant.setConnectionQuality(info.quality);
+            }
+        });
+    };
+
+    /**
+     * 获取audio上下文
+     */
+    private async acquireAudioContext() {
+        if (typeof this.options.webAudioMix !== 'boolean' && this.options.webAudioMix.audioContext) {
+            // 如果用户提供了自定义音频上下文，则覆盖音频上下文
+            this.audioContext = this.options.webAudioMix.audioContext;
+        } else if (!this.audioContext || this.audioContext.state === 'closed') {
+            // 通过使用 AudioContext，可以减少音频元素的延迟
+            // https://stackoverflow.com/questions/9811429/html5-audio-tag-on-safari-has-a-delay/54119854#54119854
+            this.audioContext = getNewAudioContext() ?? undefined;
+        }
+
+        if (this.audioContext && this.audioContext.state === 'suspended') {
+            // 对于 iOS，新创建的 AudioContext 始终处于“挂起”状态。
+            // 我们尽力恢复这里的上下文，如果这不起作用，我们就继续常规处理
+            try {
+                await this.audioContext.resume();
+            } catch (e: any) {
+                this.log.warn('Could not resume audio context', {...this.logContext, error: e});
+            }
+        }
+
+        if (this.options.webAudioMix) {
+            this.remoteParticipants.forEach((participant) => {
+                participant.setAudioContext(this.audioContext);
+            });
+        }
+
+        this.localParticipant.setAudioContext(this.audioContext);
+
+        const newContextIsRunning = this.audioContext?.state === 'running';
+        if (newContextIsRunning !== this.canPlaybackAudio) {
+            this.audioEnabled = newContextIsRunning;
+            this.emit(RoomEvent.AudioPlaybackStatusChanged, newContextIsRunning);
+        }
+    }
+
+    /**
+     * 创建参与者
+     * @param identity 唯一标识
+     * @param info 参与者信息
+     */
+    private createParticipant(identity: string, info?: ParticipantInfo): RemoteParticipant {
+        let participant: RemoteParticipant;
+        if (info) {
+            participant = RemoteParticipant.fromParticipantInfo(this.engine.client, info);
+        } else {
+            participant = new RemoteParticipant(this.engine.client, '', identity, undefined, undefined, {
+                loggerContextCb: () => this.logContext,
+                loggerName: this.options.loggerName,
+            });
+        }
+        if (this.options.audioOutput?.deviceId) {
+            participant
+                .setAudioOutput(this.options.audioOutput)
+                .catch((e) => this.log.warn(`Could not set audio output: ${e.message}`, this.logContext));
+        }
+        return participant;
+    }
+
+    /**
+     * 获取或者创建参与者
+     */
+    private getOrCreateParticipant(identity: string, info: ParticipantInfo): RemoteParticipant {
+        if (this.remoteParticipants.has(identity)) {
+            const existingParticipant = this.remoteParticipants.get(identity)!;
+            if (info) {
+                const wasUpdated = existingParticipant.updateInfo(info);
+                if (wasUpdated) {
+                    this.sidToIdentity.set(info.sid, info.identity);
+                }
+            }
+            return existingParticipant;
+        }
+        const participant = this.createParticipant(identity, info);
+        this.remoteParticipants.set(identity, participant);
+
+        this.sidToIdentity.set(info.sid, info.identity);
+        // 如果我们有有效的信息并且参与者之前不在Map中，我们可以假设参与者是新触发的，
+        // 以确保 `ParticipantConnected` 在初始跟踪事件之前触发
+        this.emitWhenConnected(RoomEvent.ParticipantConnected, participant);
+
+        // 也转发事件
+        // trackPublished 仅在本地参与者之后添加的曲目时触发
+        // 远程参与者加入房间
+        participant
+            .on(ParticipantEvent.TrackPublished, (trackPublication: RemoteTrackPublication) => {
+                this.emitWhenConnected(RoomEvent.TrackPublished, trackPublication, participant)
+            })
+            .on(
+                ParticipantEvent.TrackSubscribed,
+                (track: RemoteTrack, publication: RemoteTrackPublication) => {
+                    // 监听播放状态
+                    if (track.kind === Track.Kind.Audio) {
+                        track.on(TrackEvent.AudioPlaybackStarted, this.handleAudioPlaybackStarted);
+                        track.on(TrackEvent.AudioPlaybackFailed, this.handleAudioPlaybackFailed);
+                    } else if (track.kind === Track.Kind.Video) {
+                        track.on(TrackEvent.VideoPlaybackStarted, this.handleVideoPlaybackStarted);
+                        track.on(TrackEvent.VideoPlaybackFailed, this.handleVideoPlaybackFailed);
+                    }
+                    this.emit(RoomEvent.TrackSubscribed, track, publication, participant);
+                },
+            )
+            .on(ParticipantEvent.TrackUnpublished, (publication: RemoteTrackPublication) => {
+                this.emit(RoomEvent.TrackUnpublished, publication, participant);
+            })
+            .on(
+                ParticipantEvent.TrackUnsubscribed,
+                (track: RemoteTrack, publication: RemoteTrackPublication) => {
+                    this.emit(RoomEvent.TrackUnsubscribed, track, publication, participant);
+                }
+            )
+            .on(ParticipantEvent.TrackSubscriptionFailed, (sid: string) => {
+                this.emit(RoomEvent.TrackSubscriptionFailed, sid, participant);
+            })
+            .on(ParticipantEvent.TrackMuted, (pub: TrackPublication) => {
+                this.emitWhenConnected(RoomEvent.TrackMuted, pub, participant);
+            })
+            .on(ParticipantEvent.TrackUnmuted, (pub: TrackPublication) => {
+                this.emitWhenConnected(RoomEvent.TrackUnmuted, pub, participant);
+            })
+            .on(ParticipantEvent.ParticipantMetadataChanged, (metadata: string | undefined) => {
+                this.emitWhenConnected(RoomEvent.ParticipantMetadataChanged, metadata, participant);
+            })
+            .on(ParticipantEvent.ParticipantNameChanged, (name) => {
+                this.emitWhenConnected(RoomEvent.ParticipantNameChanged, name, participant);
+            })
+            .on(ParticipantEvent.ConnectionQualityChanged, (quality: ConnectionQuality) => {
+                this.emitWhenConnected(RoomEvent.ConnectionQualityChanged, quality, participant);
+            })
+            .on(
+                ParticipantEvent.ParticipantPermissionsChanged,
+                (prevPermissions?: ParticipantPermission) => {
+                    this.emitWhenConnected(
+                        RoomEvent.ParticipantPermissionsChanged,
+                        prevPermissions,
+                        participant,
+                    );
+                },
+            )
+            .on(ParticipantEvent.TrackSubscriptionStatusChanged, (pub, status) => {
+                this.emitWhenConnected(RoomEvent.TrackSubscriptionStatusChanged, pub, status, participant);
+            })
+            .on(ParticipantEvent.TrackSubscriptionFailed, (trackSid, error) => {
+                this.emit(RoomEvent.TrackSubscriptionFailed, trackSid, participant, error);
+            })
+            .on(ParticipantEvent.TrackSubscriptionPermissionChanged, (pub, status) => {
+                this.emitWhenConnected(
+                    RoomEvent.TrackSubscriptionPermissionChanged,
+                    pub,
+                    status,
+                    participant,
+                );
+            });
+
+        // 设置回调后最后更新信息
+        if (info) {
+            participant.updateInfo(info);
+        }
+
+        return participant;
+    }
+
+    /**
+     * 发送同步状态
+     */
+    private sendSyncState() {
+        const remoteTracks = Array.from(this.remoteParticipants.values()).reduce((acc, participant) => {
+            acc.push(...(participant.getTrackPublications() as RemoteTrackPublication[])); // FIXME would be nice to have this return RemoteTrackPublications directly instead of the type cast
+            return acc;
+        }, [] as RemoteTrackPublication[]);
+        const localTracks = this.localParticipant.getTrackPublications() as LocalTrackPublication[]; // FIXME would be nice to have this return LocalTrackPublications directly instead of the type cast
+        this.engine.sendSyncState(remoteTracks, localTracks);
+    }
+
+    /**
+     * 恢复后，我们需要通知服务器当前的情况
+     * 订阅设置。
+     */
+    private updateSubscriptions() {
+        for (const p of this.remoteParticipants.values()) {
+            for (const pub of p.videoTrackPublications.values()) {
+                if (pub.isSubscribed && pub instanceof RemoteTrackPublication) {
+                    pub.emitTrackUpdate();
+                }
+            }
+        }
+    }
+
+    /**
+     * 通过sid获取远程参与者
+     * @param sid sid
+     */
+    private getRemoteParticipantBySid(sid: string): RemoteParticipant | undefined {
+        const identity = this.sidToIdentity.get(sid);
+        if (identity) {
+            return this.remoteParticipants.get(identity);
+        }
+    }
+
+    /**
+     * 注册连接协调
+     */
+    private registerConnectionReconcile() {
+        this.clearConnectionFutures();
+        // 连续失败次数
+        let consecutiveFailures = 0;
+        this.connectionReconcileInterval = CriticalTimers.setInterval(() => {
+            if (
+                // ensure we didn't tear it down
+                !this.engine ||
+                // engine detected close, but Room missed it
+                this.engine.isClosed ||
+                // transports failed without notifying engine
+                !this.engine.verifyTransport()
+            ) {
+                consecutiveFailures++;
+                this.log.warn('detected connection state mismatch', {
+                    ...this.logContext,
+                    numFailures: consecutiveFailures,
+                    engine: {
+                        closed: this.engine.isClosed,
+                        transportsConnected: this.engine.verifyTransport(),
+                    },
+                });
+                if (consecutiveFailures >= 3) {
+                    this.recreateEngine();
+                    this.handleDisconnect(
+                        this.options.stopLocalTrackOnUnpublish,
+                        DisconnectReason.STATE_MISMATCH,
+                    );
+                }
+            } else {
+                consecutiveFailures = 0;
+            }
+        }, connectionReconcileFrequency);
+    }
+
+    /**
+     * 清除连接协调
+     */
+    private clearConnectionReconcile() {
+        if (this.connectionReconcileInterval) {
+            CriticalTimers.clearInterval(this.connectionReconcileInterval);
+        }
+    }
+
+    /**
+     * 设置并发出连接状态
+     * @param state 连接状态
+     */
+    private setAndEmitConnectionState(state: ConnectionState): boolean {
+        if (state == this.state) {
+            // 未改变
+            return false;
+        }
+        this.state = state;
+        this.emit(RoomEvent.ConnectionStateChanged, this.state);
+        return true;
+    }
+
+    /**
+     * 发出缓冲事件
+     */
+    private emitBufferedEvents() {
+        this.bufferedEvents.forEach(([ev, args]) => {
+            this.emit(ev, ...args);
+        });
+        this.bufferedEvents = [];
+    }
+
+    /**
+     * 连接时发出
+     * @param event 事件
+     * @param args 参数
+     */
+    private emitWhenConnected<E extends keyof RoomEventCallbacks>(
+        event: E,
+        ...args: Parameters<RoomEventCallbacks[E]>
+    ): boolean {
+        if (
+            this.state === ConnectionState.Reconnecting ||
+            this.isResuming ||
+            !this.engine ||
+            this.engine.pendingReconnect
+        ) {
+            // 如果房间正在重新连接，请在发出 RoomEvent.Reconnected 后触发事件来缓冲事件
+            this.bufferedEvents.push([event, args]);
+        } else if (this.state === ConnectionState.Connected) {
+            return this.emit(event, ...args);
+        }
+        return false;
+    }
+
+    /**
+     * 本地参与者元数据已更改事件
+     * @param metadata 原数据
+     */
+    private onLocalParticipantMetadataChanged = (metadata: string | undefined) => {
+        this.emit(RoomEvent.ParticipantMetadataChanged, metadata, this.localParticipant);
+    };
+
+    /**
+     * 本地参与者名称更改事件
+     * @param name 参与者名称
+     */
+    private onLocalParticipantNameChanged = (name: string) => {
+        this.emit(RoomEvent.ParticipantNameChanged, name, this.localParticipant);
+    };
+
+    /**
+     * 在本地轨道上静音事件
+     * @param pub 音轨发布事件
+     */
+    private onLocalTrackMuted = (pub: TrackPublication) => {
+        this.emit(RoomEvent.TrackMuted, pub, this.localParticipant);
+    };
+
+    /**
+     * 在本地轨道上取消静音
+     * @param pub 音轨发布
+     */
+    private onLocalTrackUnmuted = (pub: TrackPublication) => {
+        this.emit(RoomEvent.TrackUnmuted, pub, this.localParticipant);
+    };
+
+    /**
+     * 跟踪处理器更新
+     * @param processor 处理器
+     */
+    private onTrackProcessorUpdate = (processor?: TrackProcessor<Track.Kind, any>) => {
+        processor?.onPublish?.(this);
+    };
+
+    /**
+     * 在本地轨道上发布
+     * @param pub 本地音轨
+     */
+    private onLocalTrackPublished = async (pub: LocalTrackPublication) => {
+        pub.track?.on(TrackEvent.TrackProcessorUpdate, this.onTrackProcessorUpdate);
+        pub.track?.getProcessor()?.onPublish?.(this);
+
+        this.emit(RoomEvent.LocalTrackPublished, pub, this.localParticipant);
+
+        if (pub.track instanceof LocalAudioTrack) {
+            const trackIsSilent = await pub.track.checkForSilence();
+            if (trackIsSilent) {
+                this.emit(RoomEvent.LocalAudioSilenceDetected, pub);
+            }
+        }
+        const deviceId = await pub.track?.getDeviceId();
+        const deviceKind = sourceToKind(pub.source);
+        if (
+            deviceKind &&
+            deviceId &&
+            deviceId !== this.localParticipant.activeDeviceMap.get(deviceKind)
+        ) {
+            this.localParticipant.activeDeviceMap.set(deviceKind, deviceId);
+            this.emit(RoomEvent.ActiveDeviceChanged, deviceKind, deviceId);
+        }
+    };
+
+    /**
+     * 本地轨道上解除发布
+     * @param pub 本地音轨发布
+     */
+    private onLocalTrackUnpublished = async (pub: LocalTrackPublication) => {
+        pub.track?.off(TrackEvent.TrackProcessorUpdate, this.onTrackProcessorUpdate);
+        this.emit(RoomEvent.LocalTrackUnpublished, pub, this.localParticipant);
+    };
+
+    /**
+     * 本地连接质量改变
+     */
+    private onLocalConnectionQualityChanged = (quality: ConnectionQuality) => {
+        this.emit(RoomEvent.ConnectionQualityChanged, quality, this.localParticipant);
+    };
+
+    /**
+     * 媒体设备错误
+     * @param e 设置错误
+     */
+    private onMediaDevicesError = (e: Error) => {
+        this.emit(RoomEvent.MediaDevicesError, e);
+    };
+
+    private onLocalParticipantPermissionsChanged = (prevPermissions?: ParticipantPermission) => {
+        this.emit(RoomEvent.ParticipantPermissionsChanged, prevPermissions, this.localParticipant);
+    };
+
+    /**
+     * 允许在房间中填充模拟参与者。
+     * 不会建立与服务器的实际连接，所有状态都是
+     * @实验
+     */
+    async simulateParticipants(options: SimulationOptions) {
+        const publishOptions = {
+            audio: true,
+            video: true,
+            useRealTracks: false,
+            ...options.publish,
+        };
+        const participantOptions = {
+            count: 9,
+            audio: false,
+            video: true,
+            aspectRatios: [1.66, 1.7, 1.3],
+            ...options.participants,
+        };
+        this.handleDisconnect();
+        this.roomInfo = new RoomModel({
+            sid: 'RM_SIMULATED',
+            name: 'simulated-room',
+            emptyTimeout: 0,
+            maxParticipants: 0,
+            creationTime: protoInt64.parse(new Date().getTime()),
+            metadata: '',
+            numParticipants: 1,
+            numPublishers: 1,
+            turnPassword: '',
+            enabledCodecs: [],
+            activeRecording: false,
+        });
+
+        this.localParticipant.updateInfo(
+            new ParticipantInfo({
+                identity: 'simulated-local',
+                name: 'local-name',
+            }),
+        );
+        this.setupLocalParticipantEvents();
+        this.emit(RoomEvent.SignalConnected);
+        this.emit(RoomEvent.Connected);
+        this.setAndEmitConnectionState(ConnectionState.Connected);
+        if (publishOptions.video) {
+            const camPub = new LocalTrackPublication(
+                Track.Kind.Video,
+                new TrackInfo({
+                    source: TrackSource.CAMERA,
+                    sid: Math.floor(Math.random() * 10_000).toString(),
+                    type: TrackType.AUDIO,
+                    name: 'video-dummy',
+                }),
+                new LocalVideoTrack(
+                    publishOptions.useRealTracks
+                        ? (
+                            await window.navigator.mediaDevices.getUserMedia({video: true})
+                        ).getVideoTracks()[0]
+                        : createDummyVideoStreamTrack(
+                            160 * (participantOptions.aspectRatios[0] ?? 1),
+                            160,
+                            true,
+                            true,
+                        ),
+                    undefined,
+                    false,
+                    {loggerName: this.options.loggerName, loggerContextCb: () => this.logContext},
+                ),
+                {loggerName: this.options.loggerName, loggerContextCb: () => this.logContext},
+            );
+
+            // @ts-ignore
+            this.localParticipant.addTrackPublication(camPub);
+            this.localParticipant.emit(ParticipantEvent.LocalTrackPublished, camPub);
+        }
+        if (publishOptions.audio) {
+            const audioPub = new LocalTrackPublication(
+                Track.Kind.Audio,
+                new TrackInfo({
+                    source: TrackSource.MICROPHONE,
+                    sid: Math.floor(Math.random() * 10_000).toString(),
+                    type: TrackType.AUDIO,
+                }),
+                new LocalAudioTrack(
+                    publishOptions.useRealTracks
+                        ? (await navigator.mediaDevices.getUserMedia({audio: true})).getAudioTracks()[0]
+                        : getEmptyAudioStreamTrack(),
+                    undefined,
+                    false,
+                    this.audioContext,
+                    {loggerName: this.options.loggerName, loggerContextCb: () => this.logContext},
+                ),
+                {loggerName: this.options.loggerName, loggerContextCb: () => this.logContext},
+            );
+            // @ts-ignore
+            this.localParticipant.addTrackPublication(audioPub);
+            this.localParticipant.emit(ParticipantEvent.LocalTrackPublished, audioPub);
+        }
+
+        for (let i = 0; i < participantOptions.count - 1; i += 1) {
+            let info: ParticipantInfo = new ParticipantInfo({
+                sid: Math.floor(Math.random() * 10_000).toString(),
+                identity: `simulated-${i}`,
+                state: ParticipantInfo_State.ACTIVE,
+                tracks: [],
+                joinedAt: protoInt64.parse(Date.now()),
+            });
+            const p = this.getOrCreateParticipant(info.identity, info);
+            if (participantOptions.video) {
+                const dummyVideo = createDummyVideoStreamTrack(
+                    160 * (participantOptions.aspectRatios[i % participantOptions.aspectRatios.length] ?? 1),
+                    160,
+                    false,
+                    true,
+                );
+                const videoTrack = new TrackInfo({
+                    source: TrackSource.CAMERA,
+                    sid: Math.floor(Math.random() * 10_000).toString(),
+                    type: TrackType.AUDIO,
+                });
+                p.addSubscribedMediaTrack(dummyVideo, videoTrack.sid, new MediaStream([dummyVideo]));
+                info.tracks = [...info.tracks, videoTrack];
+            }
+            if (participantOptions.audio) {
+                const dummyTrack = getEmptyAudioStreamTrack();
+                const audioTrack = new TrackInfo({
+                    source: TrackSource.MICROPHONE,
+                    sid: Math.floor(Math.random() * 10_000).toString(),
+                    type: TrackType.AUDIO,
+                });
+                p.addSubscribedMediaTrack(dummyTrack, audioTrack.sid, new MediaStream([dummyTrack]));
+                info.tracks = [...info.tracks, audioTrack];
+            }
+
+            p.updateInfo(info);
+        }
+    }
+
+    // /** @internal */
+    emit<E extends keyof RoomEventCallbacks>(
+        event: E,
+        ...args: Parameters<RoomEventCallbacks[E]>
+    ): boolean {
+        // 当前发言人的更新太垃圾了
+        if (event !== RoomEvent.ActiveSpeakersChanged) {
+            // 仅从参数中提取 logContext 以避免记录整个对象树
+            const minimizedArgs = mapArgs(args).filter((arg: unknown) => arg !== undefined);
+            this.log.debug(`room event ${event}`, {...this.logContext, event, args: minimizedArgs});
+        }
+        return super.emit(event, ...args);
+    }
+}
+
+function mapArgs(args: unknown[]): any {
+    return args.map((arg: unknown) => {
+        if (!arg) {
+            return;
+        }
+        if (Array.isArray(arg)) {
+            return mapArgs(arg);
+        }
+        if (typeof arg === 'object') {
+            return 'logContext' in arg && arg.logContext;
+        }
+        return arg;
+    });
 }
 
 
@@ -836,6 +2308,8 @@ export type RoomEventCallbacks = {
         reason?: SubscriptionError,
     ) => void;
 
+    trackUnpublished: (publication: RemoteTrackPublication, participant: RemoteParticipant) => void;
+
     /**
      * 解除订阅
      * @param track
@@ -845,7 +2319,7 @@ export type RoomEventCallbacks = {
     trackUnsubscribed: (
         track: RemoteTrack,
         publication: RemoteTrackPublication,
-        participant: RemoteParticipnt,
+        participant: RemoteParticipant,
     ) => void;
     /**
      * 音轨静音
@@ -965,7 +2439,7 @@ export type RoomEventCallbacks = {
      * @param status
      * @param participant
      */
-    trackSubscriptionPermissionsChanged: (
+    trackSubscriptionPermissionChanged: (
         publication: RemoteTrackPublication,
         status: TrackPublication.PermissionStatus,
         participant: RemoteParticipant,

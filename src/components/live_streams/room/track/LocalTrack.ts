@@ -7,11 +7,11 @@ import {compareVersions, isMobile, Mutex, sleep} from "../utils";
 import {TrackProcessor} from "./processor/types";
 import {LoggerOptions} from "../types";
 import {getBrowser} from "../../utils/browserParser";
-import {ReplaceTrackOptions} from "./Types";
 import {DeviceUnsupportedError, TrackInvalidError} from "../errors";
 import DeviceManager from "../DeviceManager";
 import {TrackEvent} from "../TrackEvents";
 import {debounce} from "ts-debounce";
+import {ReplaceTrackOptions} from "@/components/live_streams/room/track/types.ts";
 
 const defaultDimensionsTimeout = 1000;
 

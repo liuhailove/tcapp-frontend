@@ -4,32 +4,12 @@
  */
 export default class CriticalTimers {
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
-    static setTimeout = (...args: Parameters<typeof setTimeout>) => {
-        if (args.length < 2) {
-            return;
-        }
-        setTimeout(args[0], args[1]);
-    };
+    static setTimeout = (...args: Parameters<typeof setTimeout>) => setTimeout(...args);
 
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
-    static setInterval = (...args: Parameters<typeof setInterval>) => {
-        if (args.length < 2) {
-            return;
-        }
-        setInterval(args[0], args[1]);
-    };
+    static setInterval = (...args: Parameters<typeof setInterval>) => setInterval(...args);
 
-    static clearTimeout = (...args: Parameters<typeof clearTimeout>) => {
-        if (args.length < 1) {
-            return;
-        }
-        clearTimeout(args[0]);
-    };
+    static clearTimeout = (...args: Parameters<typeof clearTimeout>) => clearTimeout(...args);
 
-    static clearInterval = (...args: Parameters<typeof clearInterval>) => {
-        if (args.length < 1) {
-            return;
-        }
-        clearInterval(args[0]);
-    };
+    static clearInterval = (...args: Parameters<typeof clearInterval>) => clearInterval(...args);
 }

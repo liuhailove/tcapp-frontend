@@ -43,7 +43,6 @@ import {
 } from "../../protocol/tc_rtc_pb";
 import {PCTransportState} from "../PCTransportManager";
 import {DataPublishOptions} from "../types";
-import {an} from "vitest/dist/reporters-P7C2ytIv";
 
 
 /**

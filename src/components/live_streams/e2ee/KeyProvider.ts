@@ -2,7 +2,7 @@ import { EventEmitter } from 'events';
 import type TypedEventEmitter from 'typed-emitter';
 import log from '../logger';
 import { KEY_PROVIDER_DEFAULTS } from './constants';
-import { type KeyProviderCallbacks, KeyProviderEvent } from './events';
+import { type KeyProviderCallbacks, KeyProviderEvent } from './e2eeEvents.ts';
 import type { KeyInfo, KeyProviderOptions } from './types';
 import { createKeyMaterialFromBuffer, createKeyMaterialFromString } from './utils';
 

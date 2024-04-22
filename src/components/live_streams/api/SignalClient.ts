@@ -314,6 +314,7 @@ export class SignalClient {
         this.requestQueue = new AsyncQueue();
         this.queuedRequests = [];
         this.closingLock = new Mutex();
+        this.connectionLock = new Mutex();
         this.state = SignalConnectionState.DISCONNECTED;
     }
 
@@ -521,7 +522,7 @@ export class SignalClient {
                             reject(
                                 new ConnectionError(
                                     `did not receive join response, got ${resp.message?.case} instead`,
-                                    ),
+                                ),
                             );
                         }
                         if (!shouldProcessMessage) {

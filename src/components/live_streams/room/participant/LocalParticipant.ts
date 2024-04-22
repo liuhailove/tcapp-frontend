@@ -164,8 +164,8 @@ export default class LocalParticipant extends Participant {
             .on(EngineEvent.SignalRestarted, this.handleReconnected)
             .on(EngineEvent.SignalResumed, this.handleReconnected)
             .on(EngineEvent.Restarting, this.handleReconnecting)
-            .on(EngineEvent.Resuming, this.handleReconnceting)
-            .on(EngineEvent.LocalTrackUnpublished, this.handleLocalTrackUnpublihsed)
+            .on(EngineEvent.Resuming, this.handleReconnecting)
+            .on(EngineEvent.LocalTrackUnpublished, this.handleLocalTrackUnpublished)
             .on(EngineEvent.SubscribedQualityUpdate, this.handleSubscribedQualityUpdate)
             .on(EngineEvent.Disconnected, this.handleDisconnected);
     }

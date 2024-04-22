@@ -1,4 +1,4 @@
-import {ConnectionQuality as ProtoQuality} from '../../protocol';
+import {ConnectionQuality as ProtoQuality} from '../../protocol/tc_models_pb';
 import {EventEmitter} from 'events';
 
 import type TypedEmitter from 'typed-emitter';

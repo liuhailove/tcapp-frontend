@@ -10,12 +10,12 @@
     </van-col>
   </van-row>
   <van-space style="margin-top: 2px">
-    <van-button @click="myAppActions.connectWithFormInput()" type="primary" size="small">连接</van-button>
-    <van-button @click="myAppActions.connectWithFormInput()" type="primary" size="small">加入</van-button>
-    <van-button @click="myAppActions.toggleVideo()" type="primary" size="small">切换</van-button>
-    <van-button @click="myAppActions.flipVideo()" type="primary" size="small">翻转</van-button>
-    <van-button @click="myAppActions.startAudio()" type="primary" size="small">音频</van-button>
-    <van-button @click="myAppActions.shareScreen()" type="primary" size="small">共享</van-button>
+    <van-button @click="appActions.connectWithFormInput()" type="primary" size="small">连接</van-button>
+    <van-button @click="appActions.connectWithFormInput()" type="primary" size="small">加入</van-button>
+    <van-button @click="appActions.toggleVideo()" type="primary" size="small">切换</van-button>
+    <van-button @click="appActions.flipVideo()" type="primary" size="small">翻转</van-button>
+    <van-button @click="appActions.startAudio()" type="primary" size="small">音频</van-button>
+    <van-button @click="appActions.shareScreen()" type="primary" size="small">共享</van-button>
   </van-space>
   <!--  <div id="screenshare-area">-->
   <!--    <div>-->
@@ -68,24 +68,89 @@
         placeholder="说点什么"
     >
       <template #button>
-        <van-button size="small" type="primary" @click="myAppActions.enterText()">发送</van-button>
+        <van-button size="small" type="primary" @click="appActions.enterText()">发送</van-button>
       </template>
     </van-field>
   </div>
 </template>
 <script setup lang="ts">
+import log, {LogLevel, setLogLevel} from "@/components/live_streams/logger";
+
 import Room from "@/components/live_streams/room/Room";
 import {RoomConnectOptions, RoomOptions} from "@/components/live_streams/options";
+import {RoomEvent} from "@/components/live_streams/room/TrackEvents.ts";
+import {ScreenSharePresets, VideoPresets} from "@/components/live_streams/room/track/options.ts";
+import {AccessToken} from "@/components/live_streams/token/AccessToken.ts";
 
-const chat = markRaw("");
-const myMsg = markRaw("");
+const chat = ref("");
+const myMsg = ref("");
 
 // 当前房间
 let currentRoom: Room | undefined;
 
-// 定义当前app
-const myApplications = {
+// 设置日志级别
+setLogLevel(LogLevel.debug);
 
+// 定义当前app
+const appActions = {
+
+  connectWithFormInput: async () => {
+    const url = "ws://localhost:7880";
+    const t = new AccessToken("devkey", "secret", {
+      identity: 'me',
+      name: 'myname',
+    });
+    t.addGrant({
+      roomCreate: true,
+      roomJoin: true,
+      canPublish: true,
+      canSubscribe: true,
+      room: "myroom",
+    });
+    const token = (await (t.toJwt())).toString();
+    log.info("toJwt" + token);
+    const adaptiveStream = false;
+    const simulcast = false;
+    const dynacast = false;
+    // 房间配置
+    const roomOpts: RoomOptions = {
+      adaptiveStream,
+      dynacast,
+      audioOutput: {
+        deviceId: "",
+      },
+
+      publishDefaults: {
+        simulcast,
+        videoSimulcastLayers: [VideoPresets.h90, VideoPresets.h216],
+        videoCodec: 'vp8',
+        dtx: true,
+        red: true,
+        forceStereo: false,
+        screenShareEncoding: ScreenSharePresets.h1080fps30.encoding,
+      },
+      videoCaptureDefaults: {
+        resolution: VideoPresets.h720.resolution,
+      },
+      e2ee: undefined,
+    };
+    // 链接配置
+    const connectOpts: RoomConnectOptions = {
+      autoSubscribe: true,
+    };
+    await appActions.connectToRoom(url, token, roomOpts, connectOpts, true);
+    // state.bitrateInterval = setInterval(renderBitrate, 1000);
+  },
+
+  /**
+   * 连接到房间
+   * @param url 远程地址
+   * @param token token
+   * @param roomOptions 房间选项
+   * @param connectOptions 连接选项
+   * @param shouldPublish 是否发布
+   * @return 构造的房间
+   */
   connectToRoom: async (
       url: string,
       token: string,
@@ -94,9 +159,56 @@ const myApplications = {
       shouldPublish?: boolean,
   ): Promise<Room | undefined> => {
     // 根据房间参数创建房间
-    const room=new Room(roomOptions);
+    log.debug("enter connectToRoom");
+    const room = new Room(roomOptions);
+    // 记录房间创建事件
+    const startTime = Date.now();
+    // 和Server进行交互
+    await room.prepareConnection(url, token);
+    // 预热时间
+    const preWarmTime = Date.now() - startTime;
+    log.debug("preWarmed connection in " + preWarmTime + " ms");
+    // 设置事件
+    room
+        .on(RoomEvent.Connected, () => {
+          log.debug('Connected to Server');
+        })
+        .on(RoomEvent.SignalConnected, async () => {
+          const signalConnectionTime = Date.now() - startTime;
+          log.debug(`signal connection established in ${signalConnectionTime}ms`);
+          if (shouldPublish) {
+            log.debug(`shouldPublish enableCameraAndMicrophone`);
+            await room.localParticipant.enableCameraAndMicrophone();
+            log.debug(`track published in ${Date.now() - startTime}ms`);
+          }
+        });
+    try {
+      await room.connect(url, token, connectOptions);
+      const elapsed = Date.now() - startTime;
+      log.debug(`successfully connected to ${room.name} in ${Math.round(elapsed)} ms,` + (await room.engine.getConnectedServerAddress()));
+    } catch (error: any) {
+      let message: any = error;
+      if (error.message) {
+        message = error.message;
+      }
+      log.error('could not connect:' + message);
+      return;
+    }
+    // 房间赋值
+    currentRoom = room;
+    // window对象赋值
+    window.currentRoom = room;
+    return room;
   }
-};
+}
+
+
+declare global {
+  interface Window {
+    currentRoom: any;
+    appActions: typeof appActions;
+  }
+}
 
 
 </script>

@@ -53,7 +53,7 @@ import {
 import {E2EEManager} from "../e2ee/E2eeManager";
 import {
     audioDefaults,
-    publishDefaults,
+    publishDefaults, roomConnectOptionDefaults,
     roomOptionDefaults,
     videoDefaults
 } from "./defaults";
@@ -717,7 +717,7 @@ class Room extends (EventEmitter as new() => TypedEventEmitter<RoomEventCallback
 
         this.acquireAudioContext();
 
-        this.connOptions = {...roomOptionDefaults, ...opts} as InternalRoomConnectOptions;
+        this.connOptions = {...roomConnectOptionDefaults, ...opts} as InternalRoomConnectOptions;
 
         if (this.connOptions.rtcConfig) {
             this.engine.rtcConfig = this.connOptions.rtcConfig;

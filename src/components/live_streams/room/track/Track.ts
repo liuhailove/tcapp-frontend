@@ -1,6 +1,9 @@
 import {
-    VideoQuality as ProtoQuality, StreamState as ProtoStreamState,
-} from '../../protocol';
+    VideoQuality as ProtoQuality
+} from '../../protocol/tc_models_pb';
+import {
+   StreamState as ProtoStreamState,
+} from '../../protocol/tc_rtc_pb';
 import {EventEmitter} from 'events';
 import {TrackSource, TrackType} from "../../protocol/tc_models_pb";
 import TypedEventEmitter from "typed-emitter";

@@ -88,7 +88,7 @@ type SignalMessage = SignalRequest['message'];
 /**
  * 信令类型
  */
-type SignalKind = NonNullable<SignalRequest>['case'];
+type SignalKind = NonNullable<SignalMessage>['case'];
 
 /**
  * 通过队列信号
@@ -165,7 +165,7 @@ export class SignalClient {
     /**
      * 参与者更新事件
      */
-    onParticipantUpdate?: (update: ParticipantInfo[]) => void;
+    onParticipantUpdate?: (updates: ParticipantInfo[]) => void;
 
     /**
      * 本地音轨发布事件
@@ -439,7 +439,7 @@ export class SignalClient {
                                 reject(
                                     new ConnectionError(
                                         'Internal error',
-                                        ConnectionErrorReason.IntervalError,
+                                        ConnectionErrorReason.InternalError,
                                         resp.status,
                                     ),
                                 );
@@ -538,7 +538,7 @@ export class SignalClient {
 
                 this.ws.onclose = (ev: CloseEvent) => {
                     if (this.isEstablishingConnection) {
-                        reject(new ConnectionError('Websocket get closed during a (re)connection attempt'));
+                        reject(new ConnectionError('Websocket got closed during a (re)connection attempt'));
                     }
 
                     this.log.warn(`websocket closed`, {
@@ -597,7 +597,7 @@ export class SignalClient {
                     }
                 });
 
-                if (this.ws.readyState < this.ws.CLOSED) {
+                if (this.ws.readyState < this.ws.CLOSING) {
                     this.ws.close();
                     // 250ms 宽限期，让 ws 优雅关闭
                     await Promise.race([closePromise, sleep(250)]);
@@ -931,6 +931,7 @@ export class SignalClient {
             return;
         }
         const onCloseCallback = this.onClose;
+        await this.close();
         this.log.debug(`websocket connection closed: ${reason}`, {...this.logContext, reason});
         if (onCloseCallback) {
             onCloseCallback(reason);
@@ -981,7 +982,7 @@ export class SignalClient {
     private startPingInterval() {
         this.clearPingInterval();
         this.resetPingTimeout();
-        if (!this.pingTimeoutDuration) {
+        if (!this.pingIntervalDuration) {
             this.log.warn('ping interval duration not set', this.logContext);
             return;
         }

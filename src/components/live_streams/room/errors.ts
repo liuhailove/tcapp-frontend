@@ -16,7 +16,7 @@ export class TcError extends Error {
 export const enum ConnectionErrorReason {
     NotAllowed,
     ServerUnreachable,
-    IntervalError,
+    InternalError,
     Cancelled,
     LeaveRequest,
 }

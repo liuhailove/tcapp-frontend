@@ -1,10 +1,15 @@
-import {ConnectionQuality as ProtoQuality} from '../../protocol/tc_models_pb';
+import {
+    ConnectionQuality as ProtoQuality,
+    DataPacket_Kind,
+    ParticipantInfo,
+    ParticipantPermission,
+    SubscriptionError
+} from '../../protocol/tc_models_pb';
 import {EventEmitter} from 'events';
 
 import type TypedEmitter from 'typed-emitter';
 import RemoteTrackPublication from "../track/RemoteTrackPublication";
 import RemoteTrack from "../track/RemoteTrack";
-import {DataPacket_Kind, ParticipantInfo, ParticipantPermission, SubscriptionError} from "../../protocol/tc_models_pb";
 import {TrackPublication} from "../track/TrackPublication";
 import {Track} from "../track/Track";
 import LocalTrackPublication from "../track/LocalTrackPublication";

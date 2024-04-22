@@ -563,6 +563,7 @@ export default class PCTransport extends EventEmitter {
                 } else {
                     await this.pc.setLocalDescription(sd);
                 }
+                return;
             } catch (e) {
                 this.log.warn(`not able to set ${sd.type}, falling back to unmodified sdp`, {
                     ...this.logContext,

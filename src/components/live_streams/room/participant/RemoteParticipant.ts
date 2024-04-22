@@ -22,17 +22,17 @@ export default class RemoteParticipant extends Participant {
     /**
      * 音频发布者
      */
-    audioTrackPublications: Map<string, RemoteTrackPublication>;
+    audioTrackPublications: Map<string, RemoteTrackPublication> = new Map();
 
     /**
      * 视频发布者
      */
-    videoTrackPublications: Map<string, RemoteTrackPublication>;
+    videoTrackPublications: Map<string, RemoteTrackPublication> = new Map();
 
     /**
      * 音轨发布Mao
      */
-    trackPublications: Map<String, RemoteTrackPublication>;
+    trackPublications: Map<string, RemoteTrackPublication> = new Map();
 
     /**
      * 信令客户端
@@ -138,7 +138,7 @@ export default class RemoteParticipant extends Participant {
     ) {
         this.volumeMap.set(source, volume);
         const audioPublication = this.getTrackPublication(source);
-        if (audioPublication && audioPublication.track) {
+        if (audioPublication?.track) {
             (audioPublication.track as RemoteAudioTrack).setVolume(volume);
         }
     }
@@ -150,7 +150,7 @@ export default class RemoteParticipant extends Participant {
         source: Track.Source.Microphone | Track.Source.ScreenShareAudio = Track.Source.Microphone,
     ) {
         const audioPublication = this.getTrackPublication(source);
-        if (audioPublication && audioPublication.track) {
+        if (audioPublication?.track) {
             return (audioPublication.track as RemoteAudioTrack).getVolume();
         }
         return this.volumeMap.get(source);
@@ -204,7 +204,7 @@ export default class RemoteParticipant extends Participant {
                     mediaStream,
                     receiver,
                     adaptiveStreamSettings,
-                    triesLeft! - 1,
+                    triesLeft - 1,
                 );
             }, 150);
             return;
@@ -325,7 +325,7 @@ export default class RemoteParticipant extends Participant {
 
     /** @internal */
     unpublishTrack(sid: Track.SID, sendUnpublish?: boolean) {
-        const publication = <RemoteTrackPublication>this.trackPublications.get(sid);
+        const publication = this.trackPublications.get(sid);
         if (!publication) {
             return;
         }
@@ -334,7 +334,7 @@ export default class RemoteParticipant extends Participant {
         const {track} = publication;
         if (track) {
             track.stop();
-            publication.setTrack(undefined);
+            publication.setTrack();
         }
 
         // remove track from maps only after unsubscribed has been fired

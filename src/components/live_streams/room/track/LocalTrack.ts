@@ -437,11 +437,10 @@ export default abstract class LocalTrack<TrackKind extends Track.Kind = Track.Ki
     /**
      *  处理轨道静音时间
      */
-    private handleTrackMuteEvent() {
-        this.debouncedTrackMuteHandler().catch(() => {
-            this.log.debug('track mute bounce got cancelled by an unmute event', this.logContext);
-        });
-    }
+    private handleTrackMuteEvent = () =>
+        this.debouncedTrackMuteHandler().catch(() =>
+            this.log.debug('track mute bounce got cancelled by an unmute event', this.logContext),
+        );
 
     /**
      * 去除轨道静音处理

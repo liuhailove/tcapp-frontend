@@ -5,7 +5,7 @@ import {Track} from "./Track";
 import {TrackPublication} from "./TrackPublication";
 import {
     AudioCaptureOptions,
-    CreateLocalTrackOptions,
+    CreateLocalTracksOptions,
     ScreenShareCaptureOptions,
     VideoCaptureOptions,
     VideoCodec, videoCodecs
@@ -22,11 +22,11 @@ import {AudioTrack} from "./Types";
  * @param videoDefaults 视频捕获选项
  */
 export function mergeDefaultOptions(
-    options?: CreateLocalTrackOptions,
+    options?: CreateLocalTracksOptions,
     audioDefaults?: AudioCaptureOptions,
     videoDefaults?: VideoCaptureOptions,
 ) {
-    const opts: CreateLocalTrackOptions = cloneDeep(options) ?? {};
+    const opts: CreateLocalTracksOptions = cloneDeep(options) ?? {};
     if (opts.audio === true) {
         opts.audio = {};
     }
@@ -66,7 +66,7 @@ function mergeObjectWithoutOverwriting(
  * 约束项
  * @param options 选项
  */
-export function constraintsForOptions(options: CreateLocalTrackOptions): MediaStreamConstraints {
+export function constraintsForOptions(options: CreateLocalTracksOptions): MediaStreamConstraints {
     const constraints: MediaStreamConstraints = {};
 
     if (options.video) {
@@ -149,7 +149,7 @@ export function kindToSource(kind: MediaDeviceKind) {
     if (kind === 'audioinput') {
         return Track.Source.Microphone;
     } else if (kind === 'videoinput') {
-        return Track.Source.Camera
+        return Track.Source.Camera;
     } else {
         return Track.Source.Unknown;
     }
@@ -226,7 +226,7 @@ export function getTrackPublicationInfo<T extends TrackPublication>(
                     cid: track.track.mediaStreamID,
                     track: track.trackInfo,
                 }),
-            )
+            );
         }
     });
     return infos;

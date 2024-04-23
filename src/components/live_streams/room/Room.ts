@@ -6,7 +6,6 @@ import {EventEmitter} from "events";
 import log, {getLogger, LoggerNames} from '../logger';
 
 import {
-    ConnectionQuality,
     DataPacket_Kind,
     DisconnectReason,
     ParticipantInfo,
@@ -26,7 +25,7 @@ import {TrackPublication} from "./track/TrackPublication";
 import {Track} from "./track/Track";
 import RemoteTrackPublication from "./track/RemoteTrackPublication";
 import RemoteParticipant from "./participant/RemoteParticipant";
-import Participant from "./participant/Participant";
+import Participant, {ConnectionQuality} from "./participant/Participant";
 import LocalParticipant from "./participant/LocalParticipant";
 import LocalTrackPublication from "./track/LocalTrackPublication";
 import RTCEngine from "./RTCEngine";
@@ -267,7 +266,7 @@ class Room extends (EventEmitter as new() => TypedEventEmitter<RoomEventCallback
             this.switchActiveDevice(
                 'audiooutput',
                 unwrapConstraint(this.options.audioOutput.deviceId),
-            ).catch((e) => this.log.warn(`Could not set audio output: ${e.message}`));
+            ).catch((e) => this.log.warn(`Could not set audio output: ${e.message}`, this.logContext));
         }
 
         if (this.options.e2ee) {
@@ -314,7 +313,7 @@ class Room extends (EventEmitter as new() => TypedEventEmitter<RoomEventCallback
     private get logContext() {
         return {
             room: this.name,
-            roomId: this.roomInfo?.sid,
+            roomID: this.roomInfo?.sid,
             participant: this.localParticipant.identity,
             pID: this.localParticipant.sid,
         };
@@ -370,6 +369,10 @@ class Room extends (EventEmitter as new() => TypedEventEmitter<RoomEventCallback
      */
     get numParticipants(): number {
         return this.roomInfo?.numParticipants ?? 0;
+    }
+
+    get numPublishers(): number {
+        return this.roomInfo?.numPublishers ?? 0;
     }
 
     /**
@@ -659,7 +662,7 @@ class Room extends (EventEmitter as new() => TypedEventEmitter<RoomEventCallback
         }
 
         return joinResponse;
-    }
+    };
 
     /**
      * 应用joinResponse
@@ -788,7 +791,7 @@ class Room extends (EventEmitter as new() => TypedEventEmitter<RoomEventCallback
         this.setAndEmitConnectionState(ConnectionState.Connected);
         this.emit(RoomEvent.Connected);
         this.registerConnectionReconcile();
-    }
+    };
 
     /**
      * 断开房间连接，发出 [[RoomEvent.Disconnected]]
@@ -870,8 +873,8 @@ class Room extends (EventEmitter as new() => TypedEventEmitter<RoomEventCallback
             case 'node-failure':
                 req = new SimulateScenario({
                     scenario: {
-                        case: 'speakerUpdate',
-                        value: 3,
+                        case: 'nodeFailure',
+                        value: true,
                     },
                 });
                 break;
@@ -908,7 +911,7 @@ class Room extends (EventEmitter as new() => TypedEventEmitter<RoomEventCallback
                     },
                 });
                 break;
-            case 'disconnect-signal-on-resume-no-message':
+            case 'disconnect-signal-on-resume-no-messages':
                 postAction = async () => {
                     // @ts-expect-error function is private
                     await this.engine.client.handleOnClose('simulate resume-disconnect');
@@ -1319,7 +1322,7 @@ class Room extends (EventEmitter as new() => TypedEventEmitter<RoomEventCallback
         } catch (error) {
             this.log.error('error trying to re-publish tracks after reconnection', {
                 ...this.logContext,
-                error
+                error,
             });
         }
 
@@ -1357,7 +1360,7 @@ class Room extends (EventEmitter as new() => TypedEventEmitter<RoomEventCallback
         try {
             this.remoteParticipants.forEach((p) => {
                 p.trackPublications.forEach((pub) => {
-                    p.unpublishTrack(pub.trackSid)
+                    p.unpublishTrack(pub.trackSid);
                 });
             });
 
@@ -1375,6 +1378,7 @@ class Room extends (EventEmitter as new() => TypedEventEmitter<RoomEventCallback
                 .off(ParticipantEvent.ParticipantMetadataChanged, this.onLocalParticipantMetadataChanged)
                 .off(ParticipantEvent.ParticipantNameChanged, this.onLocalParticipantNameChanged)
                 .off(ParticipantEvent.TrackMuted, this.onLocalTrackMuted)
+                .off(ParticipantEvent.TrackUnmuted, this.onLocalTrackUnmuted)
                 .off(ParticipantEvent.LocalTrackPublished, this.onLocalTrackPublished)
                 .off(ParticipantEvent.LocalTrackUnpublished, this.onLocalTrackUnpublished)
                 .off(ParticipantEvent.ConnectionQualityChanged, this.onLocalConnectionQualityChanged)
@@ -1476,6 +1480,7 @@ class Room extends (EventEmitter as new() => TypedEventEmitter<RoomEventCallback
                 }
             }
         });
+
         if (!seenSids[this.localParticipant.sid]) {
             this.localParticipant.audioLevel = 0;
             this.localParticipant.setIsSpeaking(false);
@@ -1534,7 +1539,7 @@ class Room extends (EventEmitter as new() => TypedEventEmitter<RoomEventCallback
                 return;
             }
             pub.track.streamState = Track.streamStateFromProto(streamState.state);
-            participant.emit(ParticipantEvent.TrackStreamStateChanged, pub, pub.track.streamStates);
+            participant.emit(ParticipantEvent.TrackStreamStateChanged, pub, pub.track.streamState);
             this.emitWhenConnected(
                 RoomEvent.TrackStreamStateChanged,
                 pub,
@@ -1635,7 +1640,7 @@ class Room extends (EventEmitter as new() => TypedEventEmitter<RoomEventCallback
             this.isVideoPlaybackBlocked = true;
             this.emit(RoomEvent.VideoPlaybackStatusChanged, false);
         }
-    }
+    };
 
     /**
      * 处理设备改变
@@ -1728,6 +1733,9 @@ class Room extends (EventEmitter as new() => TypedEventEmitter<RoomEventCallback
                 loggerName: this.options.loggerName,
             });
         }
+        if (this.options.webAudioMix) {
+            participant.setAudioContext(this.audioContext);
+        }
         if (this.options.audioOutput?.deviceId) {
             participant
                 .setAudioOutput(this.options.audioOutput)
@@ -1786,7 +1794,7 @@ class Room extends (EventEmitter as new() => TypedEventEmitter<RoomEventCallback
                 ParticipantEvent.TrackUnsubscribed,
                 (track: RemoteTrack, publication: RemoteTrackPublication) => {
                     this.emit(RoomEvent.TrackUnsubscribed, track, publication, participant);
-                }
+                },
             )
             .on(ParticipantEvent.TrackSubscriptionFailed, (sid: string) => {
                 this.emit(RoomEvent.TrackSubscriptionFailed, sid, participant);
@@ -1880,8 +1888,7 @@ class Room extends (EventEmitter as new() => TypedEventEmitter<RoomEventCallback
      * 注册连接协调
      */
     private registerConnectionReconcile() {
-        this.clearConnectionFutures();
-        // 连续失败次数
+        this.clearConnectionReconcile();
         let consecutiveFailures = 0;
         this.connectionReconcileInterval = CriticalTimers.setInterval(() => {
             if (
@@ -2136,7 +2143,6 @@ class Room extends (EventEmitter as new() => TypedEventEmitter<RoomEventCallback
                 ),
                 {loggerName: this.options.loggerName, loggerContextCb: () => this.logContext},
             );
-
             // @ts-ignore
             this.localParticipant.addTrackPublication(camPub);
             this.localParticipant.emit(ParticipantEvent.LocalTrackPublished, camPub);

@@ -143,13 +143,13 @@ export class PCTransportManager {
         // 在订阅者主模式下，服务器端打开子数据通道。
         this.subscriber.onDataChannel = (ev) => {
             this.onDataChannel?.(ev);
-        }
+        };
         this.subscriber.onTrack = (ev) => {
             this.onTrack?.(ev);
         };
-        this.subscriber.onOffer = (offer) => {
+        this.publisher.onOffer = (offer) => {
             this.onPublisherOffer?.(offer);
-        }
+        };
 
         this.state = PCTransportState.NEW;
 
@@ -236,7 +236,7 @@ export class PCTransportManager {
             ...this.logContext,
             RTCSdpType: sd.type,
             sdp: sd.sdp,
-            signallingState: this.subscriber.getSignallingState().toString(),
+            signalingState: this.subscriber.getSignallingState().toString(),
         });
         await this.subscriber.setRemoteDescription(sd);
 
@@ -356,18 +356,18 @@ export class PCTransportManager {
     private updateState = () => {
         const previousState = this.state;
 
-        const connectionState = this.requiredTransports.map((tr) => tr.getConnectionState());
-        if (connectionState.every((st) => st === 'connected')) {
+        const connectionStates = this.requiredTransports.map((tr) => tr.getConnectionState());
+        if (connectionStates.every((st) => st === 'connected')) {
             this.state = PCTransportState.CONNECTED;
-        } else if (connectionState.some((st) => st === 'failed')) {
+        } else if (connectionStates.some((st) => st === 'failed')) {
             this.state = PCTransportState.FAILED;
-        } else if (connectionState.some((st) => st === 'connecting')) {
+        } else if (connectionStates.some((st) => st === 'connecting')) {
             this.state = PCTransportState.CONNECTING;
-        } else if (connectionState.every((st) => st === 'closed')) {
+        } else if (connectionStates.every((st) => st === 'closed')) {
             this.state = PCTransportState.CLOSED;
-        } else if (connectionState.some((st) => st === 'closed')) {
+        } else if (connectionStates.some((st) => st === 'closed')) {
             this.state = PCTransportState.CLOSING;
-        } else if (connectionState.every((st) => st === 'new')) {
+        } else if (connectionStates.every((st) => st === 'new')) {
             this.state = PCTransportState.NEW;
         }
 
@@ -436,6 +436,4 @@ export class PCTransportManager {
             resolve();
         });
     }
-
-
 }

@@ -120,7 +120,7 @@ export interface TrackPublishOptions extends TrackPublishDefaults {
 /**
  * 创建本地音轨选项
  */
-export interface CreateLocalTrackOptions {
+export interface CreateLocalTracksOptions {
     /**
      * 音轨选项，true 则使用默认值创建。 如果不应创建音频则为 false
      * 默认为真

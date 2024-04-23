@@ -6,6 +6,7 @@ import {TrackInvalidError} from "../errors";
 import log from '../../logger';
 
 import {
+    BackupVideoCodec,
     ScreenSharePresets,
     TrackPublishOptions, VideoCodec,
     VideoEncoding,
@@ -13,8 +14,9 @@ import {
     VideoPresets,
     VideoPresets43
 } from "../track/options";
-import {getReactNativeOs, isFireFox, isReactNative, isSVCCodec} from "../utils";
+import {compareVersions, getReactNativeOs, isFireFox, isReactNative, isSafari, isSVCCodec} from "../utils";
 import {Track} from "../track/Track";
+import {getBrowser} from "../../utils/browserParser.ts";
 
 export function mediaTrackToLocalTrack(
     mediaStreamTrack: MediaStreamTrack,
@@ -137,14 +139,37 @@ export function computeVideoEncodings(
         if (sm.spatial > 3) {
             throw new Error(`unsupported scalabilityMode: ${scalabilityMode}`);
         }
-        encodings.push({
-            maxBitrate: videoEncoding?.maxBitrate,
+        // Before M113 in Chrome, defining multiple encodings with an SVC codec indicated
+        // that SVC mode should be used. Safari still works this way.
+        // This is a bit confusing but is due to how libwebrtc interpreted the encodings field
+        // before M113.
+        // Announced here: https://groups.google.com/g/discuss-webrtc/c/-QQ3pxrl-fw?pli=1
+        const browser = getBrowser();
+        if (
+            isSafari() ||
+            (browser?.name === 'Chrome' && compareVersions(browser?.version, '113') < 0)
+        ) {
+            for (let i = 0; i < sm.spatial; i += 1) {
+                // in legacy SVC, scaleResolutionDownBy cannot be set
+                encodings.push({
+                    rid: videoRids[2 - i],
+                    maxBitrate: videoEncoding.maxBitrate / 3 ** i,
+                    maxFramerate: original.encoding.maxFramerate,
+                });
+            }
+            // legacy SVC, scalabilityMode is set only on the first encoding
             /* @ts-ignore */
-            maxFramerate: original.encoding.maxFramerate,
-            /* @ts-ignore */
-            scalabilityMode: scalabilityMode,
-        });
-        log.debug(`using svc encoding`, encodings[0]);
+            encodings[0].scalabilityMode = scalabilityMode;
+        } else {
+            encodings.push({
+                maxBitrate: videoEncoding.maxBitrate,
+                maxFramerate: original.encoding.maxFramerate,
+                /* @ts-ignore */
+                scalabilityMode: scalabilityMode,
+            });
+        }
+
+        log.debug(`using svc encoding`, {encodings});
         return encodings;
     }
 
@@ -159,7 +184,7 @@ export function computeVideoEncodings(
             defaultSimulcastLayers(isScreenShare, original);
     } else {
         presets =
-            sortPresets(options?.videoSimulcastLayers ?? defaultSimulcastLayers(isScreenShare, original));
+            sortPresets(options?.videoSimulcastLayers) ?? defaultSimulcastLayers(isScreenShare, original);
     }
     let midPreset: VideoPreset | undefined;
     if (presets.length > 0) {
@@ -319,7 +344,10 @@ function encodingsFromPresets(
             scaleResolutionDownBy: Math.max(1, size / Math.min(preset.width, preset.height)),
             maxBitrate: preset.encoding.maxBitrate,
         };
-        const canSetPriority = isFireFox() || idx == 0;
+        if (preset.encoding.maxFramerate) {
+            encoding.maxFramerate = preset.encoding.maxFramerate;
+        }
+        const canSetPriority = isFireFox() || idx === 0;
         if (preset.encoding.priority && canSetPriority) {
             encoding.priority = preset.encoding.priority;
             encoding.networkPriority = preset.encoding.priority;

@@ -1,6 +1,6 @@
 import {TrackPublication} from "./TrackPublication";
 import RemoteTrack from "./RemoteTrack";
-import {Track, VideoQuality} from "./Track";
+import {Track} from "./Track";
 import {ParticipantTracks, SubscriptionError, TrackInfo, VideoQuality} from "../../protocol/tc_models_pb";
 import {LoggerOptions} from "../types";
 import {UpdateSubscription, UpdateTrackSettings} from "../../protocol/tc_rtc_pb";
@@ -87,7 +87,7 @@ export default class RemoteTrackPublication extends TrackPublication {
      * 获取订阅状态
      */
     get subscriptionStatus(): TrackPublication.SubscriptionStatus {
-        if (this.subscribed == false) {
+        if (this.subscribed === false) {
             return TrackPublication.SubscriptionStatus.Unsubscribed;
         }
         if (!super.isSubscribed) {
@@ -130,12 +130,12 @@ export default class RemoteTrackPublication extends TrackPublication {
      * @param enabled
      */
     setEnabled(enabled: boolean) {
-        if (!this.isManualOperationAllowed() || this.disabled !== enabled) {
+        if (!this.isManualOperationAllowed() || this.disabled === !enabled) {
             return;
         }
         this.disabled = !enabled;
 
-         this.emitTrackUpdate();
+        this.emitTrackUpdate();
     }
 
     /**
@@ -146,7 +146,7 @@ export default class RemoteTrackPublication extends TrackPublication {
      * 优化不间断视频
      */
     setVideoQuality(quality: VideoQuality) {
-        if (!this.isManualOperationAllowed() || this.currentVideoQuality == quality) {
+        if (!this.isManualOperationAllowed() || this.currentVideoQuality === quality) {
             return;
         }
         this.currentVideoQuality = quality;
@@ -163,8 +163,8 @@ export default class RemoteTrackPublication extends TrackPublication {
             return;
         }
         if (
-            this.videoDimensions?.width == dimensions.width &&
-            this.videoDimensions?.height == dimensions.height
+            this.videoDimensions?.width === dimensions.width &&
+            this.videoDimensions?.height === dimensions.height
         ) {
             return;
         }
@@ -180,7 +180,7 @@ export default class RemoteTrackPublication extends TrackPublication {
      * 设置视频祯数
      * @param fps 每秒帧数（Frames Per Second）
      */
-    setVideoFps(fps: number) {
+    setVideoFPS(fps: number) {
         if (!this.isManualOperationAllowed()) {
             return;
         }
@@ -235,11 +235,11 @@ export default class RemoteTrackPublication extends TrackPublication {
 
     /** @internal */
     setAllowed(allowed: boolean) {
-        const prevStats = this.subscriptionStatus;
+        const prevStatus = this.subscriptionStatus;
         const prevPermission = this.permissionStatus;
         this.allowed = allowed;
         this.emitPermissionUpdateIfChanged(prevPermission);
-        this.emitSubscriptionUpdateIfChanged(prevStats);
+        this.emitSubscriptionUpdateIfChanged(prevStatus);
     }
 
     /** @internal */

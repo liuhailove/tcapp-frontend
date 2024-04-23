@@ -30,7 +30,7 @@ export interface VideoProcessorOptions extends ProcessorOptions<Track.Kind.Video
  */
 export interface TrackProcessor<T extends Track.Kind,
     U extends ProcessorOptions<T> = ProcessorOptions<T>,
-    > {
+> {
     /**
      * 名称
      */

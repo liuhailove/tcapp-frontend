@@ -55,8 +55,8 @@ export default class RemoteAudioTrack extends RemoteTrack<Track.Kind.Audio> {
         super(mediaTrack, sid, Track.Kind.Audio, receiver, loggerOptions);
         this.audioContext = audioContext;
         this.webAudioPluginNodes = [];
-        if (audioContext) {
-            this.sinkId = audioOutput?.deviceId;
+        if (audioOutput) {
+            this.sinkId = audioOutput.deviceId;
         }
     }
 
@@ -115,7 +115,7 @@ export default class RemoteAudioTrack extends RemoteTrack<Track.Kind.Audio> {
         );
     }
 
-    attach(): HTMLMediaElement ;
+    attach(): HTMLMediaElement;
     attach(element: HTMLMediaElement): HTMLMediaElement;
     attach(element?: HTMLMediaElement): HTMLMediaElement {
         const needsNewWebAudioConnection = this.attachedElements.length === 0;
@@ -292,6 +292,6 @@ export default class RemoteAudioTrack extends RemoteTrack<Track.Kind.Audio> {
                 };
             }
         });
+        return receiverStats;
     }
-
 }

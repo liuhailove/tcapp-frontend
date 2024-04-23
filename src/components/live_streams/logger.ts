@@ -38,7 +38,7 @@ type LogLevelString = keyof typeof LogLevel;
  * 其扩展的方法trace、debug、info、warn、error、setDefaultLevel、
  * setLevel、getLevel
  */
-export type StructureLogger = log.Logger & {
+export type StructuredLogger = log.Logger & {
     trace: (msg: string, context?: object) => void;
     debug: (msg: string, context?: object) => void;
     info: (msg: string, context?: object) => void;
@@ -67,7 +67,7 @@ tcLogger.setDefaultLevel(LogLevel.info);
 /**
  * 把tcLogger断言为StructureLogger类型，并作为默认导出
  */
-export default tcLogger as StructureLogger;
+export default tcLogger as StructuredLogger;
 
 /**
  * 根据名称构建logger对象
@@ -76,7 +76,7 @@ export default tcLogger as StructureLogger;
 export function getLogger(name: string) {
     const logger = log.getLogger(name);
     logger.setDefaultLevel(tcLogger.getLevel());
-    return logger as StructureLogger;
+    return logger as StructuredLogger;
 }
 
 /**
@@ -102,7 +102,7 @@ export type LogExtension = (level: LogLevel, msg: string, context?: object) => v
  * 使用它来连接日志记录功能，以允许将内部 TcApp 日志发送到第三方服务
  * 如果设置，浏览器日志将丢失其堆栈跟踪信息（请参阅 https://github.com/pimterry/loglevel#writing-plugins）
  */
-export function setLogExtension(extension: LogExtension, logger?: StructureLogger) {
+export function setLogExtension(extension: LogExtension, logger?: StructuredLogger) {
     const loggers = logger ? [logger] : tcLoggers;
 
     loggers.forEach((logR) => {
@@ -132,4 +132,4 @@ export function setLogExtension(extension: LogExtension, logger?: StructureLogge
 /**
  * 定义workerLogger常量
  */
-export const workerLogger = log.getLogger('tc-e2ee') as StructureLogger;
+export const workerLogger = log.getLogger('tc-e2ee') as StructuredLogger;

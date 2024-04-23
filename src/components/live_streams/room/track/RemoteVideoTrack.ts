@@ -2,7 +2,7 @@ import {attachToElement, detachTrack, Track} from "./Track";
 import RemoteTrack from "./RemoteTrack";
 import {computeBitrate, VideoReceiverStats} from "../stats";
 import {getDevicePixelRatio, getIntersectionObserver, getResizeObserver, isWeb, ObservableMediaElement} from "../utils";
-import {AdaptiveStreamSettings} from "./Types";
+import {AdaptiveStreamSettings} from "./types";
 import {LoggerOptions} from "../types";
 import {debounce} from "ts-debounce";
 import CriticalTimers from "../timers";
@@ -114,7 +114,7 @@ export default class RemoteVideoTrack extends RemoteTrack<Track.Kind.Video> {
             this.debouncedHandleResize();
             this.updateVisibility();
         } else {
-            this.log.warn('visibility resize observer not trigger', this.logContext);
+            this.log.warn('visibility resize observer not triggered', this.logContext);
         }
     }
 
@@ -251,7 +251,7 @@ export default class RemoteVideoTrack extends RemoteTrack<Track.Kind.Video> {
         const isVisible =
             (this.elementInfos.some((info) => info.visible) && !backgroundPause);
 
-        if (this.lastVisible == isVisible) {
+        if (this.lastVisible === isVisible) {
             return;
         }
 
@@ -283,7 +283,7 @@ export default class RemoteVideoTrack extends RemoteTrack<Track.Kind.Video> {
             }
         }
 
-        if (this.lastDimensions?.width === maxWidth && this.lastDimensions?.height == maxHeight) {
+        if (this.lastDimensions?.width === maxWidth && this.lastDimensions?.height === maxHeight) {
             return;
         }
 
@@ -291,6 +291,7 @@ export default class RemoteVideoTrack extends RemoteTrack<Track.Kind.Video> {
             width: maxWidth,
             height: maxHeight,
         };
+
         this.emit(TrackEvent.VideoDimensionsChanged, this.lastDimensions, this);
     }
 
@@ -460,7 +461,7 @@ class HTMLElementInfo implements ElementInfo {
             this.visibilityChangedAt = Date.now();
             this.handleVisibilityChanged?.();
         }
-    }
+    };
 
     /**
      * 进入画中画

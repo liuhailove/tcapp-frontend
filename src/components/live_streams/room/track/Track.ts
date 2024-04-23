@@ -9,7 +9,7 @@ import {TrackSource, TrackType} from "../../protocol/tc_models_pb";
 import TypedEventEmitter from "typed-emitter";
 import {LoggerOptions} from "../types";
 import {TrackEvent} from '../TrackEvents';
-import log, {getLogger, LoggerNames, StructureLogger} from "../../logger";
+import log, {getLogger, LoggerNames, StructuredLogger} from "../../logger";
 import {isFireFox, isSafari, isWeb} from "../utils";
 import {TrackProcessor} from "./processor/types";
 import {getLogContextFromTrack} from "./utils";
@@ -105,7 +105,7 @@ export abstract class Track<TrackKind extends Track.Kind = Track.Kind> extends (
     /**
      * 日志
      */
-    protected log: StructureLogger = log;
+    protected log: StructuredLogger = log;
 
     protected constructor(
         mediaTrack: MediaStreamTrack,
@@ -271,7 +271,7 @@ export abstract class Track<TrackKind extends Track.Kind = Track.Kind> extends (
             this.attachedElements = [];
             return detached;
         } finally {
-            if (this.attachedElements.length == 0) {
+            if (this.attachedElements.length === 0) {
                 this.removeAppVisibilityListener();
             }
         }
@@ -412,7 +412,7 @@ export function attachToElement(track: MediaStreamTrack, element: HTMLMediaEleme
     }
 
     // 如果媒体流上没有音轨，我们将元素设置为静音以确保自动播放正常工作
-    element.muted = mediaStream.getAudioTracks().length == 0;
+    element.muted = mediaStream.getAudioTracks().length === 0;
     if (element instanceof HTMLVideoElement) {
         element.playsInline = true;
     }

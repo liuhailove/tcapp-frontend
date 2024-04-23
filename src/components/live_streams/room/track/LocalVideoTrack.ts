@@ -10,7 +10,7 @@ import {isFireFox, isMobile, isWeb, Mutex, unwrapConstraint} from "../utils";
 import {LoggerOptions} from "../types";
 import {constraintsForOptions} from "./utils";
 import {TrackProcessor} from "./processor/types";
-import {StructureLogger} from "../../logger";
+import {StructuredLogger} from "../../logger";
 import {ScalabilityMode} from "../participant/publishUtils";
 
 /**
@@ -138,7 +138,7 @@ export default class LocalVideoTrack extends LocalTrack<Track.Kind.Video> {
     async pauseUpstream() {
         await super.pauseUpstream();
         for await (const sc of this.simulcastCodecs.values()) {
-            await sc.sender?.replaceTrack(null as MediaStreamTrack);
+            await sc.sender?.replaceTrack(null);
         }
     }
 
@@ -226,17 +226,20 @@ export default class LocalVideoTrack extends LocalTrack<Track.Kind.Video> {
                     streamId: v.id,
                     frameHeight: v.frameHeight,
                     frameWidth: v.frameWidth,
+                    framesPerSecond: v.framesPerSecond,
+                    framesSent: v.framesSent,
                     firCount: v.firCount,
                     pliCount: v.pliCount,
                     nackCount: v.nackCount,
                     packetsSent: v.packetsSent,
                     bytesSent: v.bytesSent,
-                    framesSent: v.framesSent,
-                    timestamp: v.timestamp,
+                    qualityLimitationReason: v.qualityLimitationReason,
+                    qualityLimitationDurations: v.qualityLimitationDurations,
+                    qualityLimitationResolutionChanges: v.qualityLimitationResolutionChanges,
                     rid: v.rid ?? v.id,
                     retransmittedPacketsSent: v.retransmittedPacketsSent,
-                    qualityLimitationReason: v.qualityLimitationReason,
-                    qualityLimitationResolutionChanges: v.qualityLimitationResolutionChanges,
+                    targetBitrate: v.targetBitrate,
+                    timestamp: v.timestamp,
                 };
 
                 // 找到适当的远程入站 rtp 项目
@@ -251,6 +254,8 @@ export default class LocalVideoTrack extends LocalTrack<Track.Kind.Video> {
             }
         });
 
+        // make sure highest res layer is always first
+        items.sort((a, b) => (b.frameWidth ?? 0) - (a.frameWidth ?? 0));
         return items;
     }
 
@@ -265,7 +270,7 @@ export default class LocalVideoTrack extends LocalTrack<Track.Kind.Video> {
                 new SubscribedQuality({
                     quality: q,
                     enabled: q <= maxQuality,
-                })
+                }),
             );
         }
         this.log.debug(`setting publishing quality. max quality ${maxQuality}`, this.logContext);
@@ -484,7 +489,7 @@ async function setPublishingLayersForSender(
     senderEncodings: RTCRtpEncodingParameters[],
     qualities: SubscribedQuality[],
     senderLock: Mutex,
-    log: StructureLogger,
+    log: StructuredLogger,
     logContext: Record<string, unknown>,
 ) {
     const unlock = await senderLock.lock();
@@ -528,9 +533,22 @@ async function setPublishingLayersForSender(
                     encoding.active = false;
                     hasChanged = true;
                 }
-            } else if (!encoding.active) {
+            } else if (!encoding.active /* || mode.spatial !== maxQuality + 1*/) {
                 hasChanged = true;
                 encoding.active = true;
+                /*
+                @ts-ignore
+                const originalMode = new ScalabilityMode(senderEncodings[0].scalabilityMode)
+                mode.spatial = maxQuality + 1;
+                mode.suffix = originalMode.suffix;
+                if (mode.spatial === 1) {
+                  // no suffix for L1Tx
+                  mode.suffix = undefined;
+                }
+                @ts-ignore
+                encoding.scalabilityMode = mode.toString();
+                encoding.scaleResolutionDownBy = 2 ** (2 - maxQuality);
+              */
             }
         } else {
             // 联播动态编码
@@ -561,12 +579,12 @@ async function setPublishingLayersForSender(
                             encoding.scaleResolutionDownBy = senderEncodings[idx].scaleResolutionDownBy;
                             encoding.maxBitrate = senderEncodings[idx].maxBitrate;
                             /* @ts-ignore */
-                            encoding.maxFramerate = senderEncodings[idx].maxFramerate;
+                            encoding.maxFrameRate = senderEncodings[idx].maxFrameRate;
                         } else {
                             encoding.scaleResolutionDownBy = 4;
                             encoding.maxBitrate = 10;
                             /* @ts-ignore */
-                            encoding.maxFramerate = 2;
+                            encoding.maxFrameRate = 2;
                         }
                     }
                 }
@@ -595,7 +613,6 @@ export function videoQualityForRid(rid: string): VideoQuality {
             return VideoQuality.HIGH;
     }
 }
-
 
 export function videoLayersFromEncodings(
     width: number,

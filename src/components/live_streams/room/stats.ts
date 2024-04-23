@@ -40,7 +40,7 @@ export interface AudioSenderStats extends SenderStats {
  * 视频发送统计
  */
 export interface VideoSenderStats extends SenderStats {
-    type: 'video',
+    type: 'video';
 
     /**
      * 用于计数 FIR（Full Intra Request）消息的变量
@@ -63,23 +63,29 @@ export interface VideoSenderStats extends SenderStats {
 
     frameHeight: number;
 
+    framesPerSecond: number;
+
     /**
      * 发送的祯
      */
     framesSent: number;
 
     // bandwidth, cpu, other, none
-    qualityLimitationReason: string;
+    qualityLimitationReason?: string;
+
+    qualityLimitationDurations?: Record<string, number>;
 
     /**
      * 质量限制分辨率更改
      */
-    qualityLimitationResolutionChanges: number;
+    qualityLimitationResolutionChanges?: number;
 
     /**
      * 重新发送的数据包
      */
-    retransmittedPacketsSent: number;
+    retransmittedPacketsSent?: number;
+
+    targetBitrate: number;
 }
 
 /**

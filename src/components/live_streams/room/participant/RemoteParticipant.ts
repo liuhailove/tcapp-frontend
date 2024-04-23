@@ -126,6 +126,13 @@ export default class RemoteParticipant extends Participant {
         }
     }
 
+    getTrackPublicationByName(name: string): RemoteTrackPublication | undefined {
+        const track = super.getTrackPublicationByName(name);
+        if (track) {
+            return track as RemoteTrackPublication;
+        }
+    }
+
     /**
      * 设置参与者音轨的音量
      * 默认情况下，这会影响麦克风发布
@@ -163,7 +170,7 @@ export default class RemoteParticipant extends Participant {
         mediaStream: MediaStream,
         receiver?: RTCRtpReceiver,
         adaptiveStreamSettings?: AdaptiveStreamSettings,
-        triesLeft?: number
+        triesLeft?: number,
     ) {
         // 查找曲目pub
         // 媒体轨道有可能在参与者信息之前到达
@@ -286,7 +293,7 @@ export default class RemoteParticipant extends Participant {
                 publication.updateInfo(ti);
                 newTracks.set(ti.sid, publication);
                 const existingTrackOfSource = Array.from(this.trackPublications.values()).find(
-                    (publicationTrack) => publicationTrack.source === publication?.source,
+                    (publishedTrack) => publishedTrack.source === publication?.source,
                 );
                 if (existingTrackOfSource && publication.source !== Track.Source.Unknown) {
                     this.log.debug(
@@ -308,7 +315,7 @@ export default class RemoteParticipant extends Participant {
         // 检测移除的音轨
         this.trackPublications.forEach((publication) => {
             if (!validTracks.has(publication.trackSid)) {
-                this.log.trace('detected removed track on remote participant, unpublish', {
+                this.log.trace('detected removed track on remote participant, unpublishing', {
                     ...this.logContext,
                     ...getLogContextFromTrack(publication),
                 });

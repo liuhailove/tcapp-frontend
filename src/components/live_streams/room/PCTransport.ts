@@ -544,10 +544,12 @@ export default class PCTransport extends EventEmitter {
         this._pc.onnegotiationneeded = null;
         this._pc.onsignalingstatechange = null;
         this._pc.onicecandidate = null;
+        this._pc.ondatachannel = null;
         this._pc.ontrack = null;
         this._pc.onconnectionstatechange = null;
+        this._pc.oniceconnectionstatechange = null;
         this._pc = null;
-    }
+    };
 
     private async setMungedSDP(sd: RTCSessionDescriptionInit, munged?: string, remote?: boolean) {
         if (munged) {
@@ -608,7 +610,7 @@ function ensureAudioNackAndStereo(
         type: string;
         port: number;
         protocol: string;
-        payload?: string | undefined;
+        payloads?: string | undefined;
     } & MediaDescription,
     stereoMids: string[],
     nackMids: string[],
@@ -720,4 +722,3 @@ function extractStereoAndNackAudioFromOffer(offer: RTCSessionDescriptionInit): {
     });
     return {stereoMids, nackMids};
 }
-

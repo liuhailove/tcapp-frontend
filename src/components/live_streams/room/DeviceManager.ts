@@ -15,6 +15,8 @@ export default class DeviceManager {
      */
     private static instance?: DeviceManager;
 
+    static mediaDeviceKinds: MediaDeviceKind[] = ['audioinput', 'audiooutput', 'videoinput'];
+
     static getInstance(): DeviceManager {
         if (this.instance === undefined) {
             this.instance = new DeviceManager();
@@ -34,7 +36,7 @@ export default class DeviceManager {
      */
     async getDevices(
         kind?: MediaDeviceKind,
-        requestPermission: boolean = true,
+        requestPermissions: boolean = true,
     ): Promise<MediaDeviceInfo[]> {
         if (DeviceManager.userMediaPromiseMap?.size > 0) {
             log.debug('awaiting getUserMedia promise');
@@ -51,7 +53,7 @@ export default class DeviceManager {
         let devices = await navigator.mediaDevices.enumerateDevices();
 
         if (
-            requestPermission &&
+            requestPermissions &&
             // 对于 safari，我们需要跳过此检查，否则它将重新获取用户媒体并在 iOS 上失败 https://bugs.webkit.org/show_bug.cgi?id=179363
             !(isSafari() && this.hasDeviceInUse(kind))
         ) {
@@ -124,5 +126,4 @@ export default class DeviceManager {
             ? DeviceManager.userMediaPromiseMap.has(kind)
             : DeviceManager.userMediaPromiseMap.size > 0;
     }
-
 }

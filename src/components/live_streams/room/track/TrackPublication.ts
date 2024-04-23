@@ -102,7 +102,7 @@ export class TrackPublication extends (EventEmitter as new() => TypedEventEmitte
         return {
             ...this.loggerContextCb?.(),
             ...getLogContextFromTrack(this),
-        }
+        };
     }
 
     /**

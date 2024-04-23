@@ -189,7 +189,7 @@ export default class RTCEngine extends (EventEmitter as new() => TypedEventEmitt
     /**
      * 重连开始时间
      */
-    private reconnectStart: number;
+    private reconnectStart: number = 0;
 
     /**
      * 客户端配置
@@ -379,6 +379,7 @@ export default class RTCEngine extends (EventEmitter as new() => TypedEventEmitt
             dc.close();
             dc.onbufferedamountlow = null;
             dc.onclose = null;
+            dc.onclosing = null;
             dc.onerror = null;
             dc.onmessage = null;
             dc.onopen = null;
@@ -446,6 +447,7 @@ export default class RTCEngine extends (EventEmitter as new() => TypedEventEmitt
         }
         try {
             this.pcManager!.removeTrack(sender);
+            return true;
         } catch (e: unknown) {
             this.log.warn('failed to remove track', {...this.logContext, error: e});
         }
@@ -536,7 +538,7 @@ export default class RTCEngine extends (EventEmitter as new() => TypedEventEmitt
             const isPCSevered = [
                 PCTransportState.FAILED,
                 PCTransportState.CLOSING,
-                PCTransportState.CLOSED
+                PCTransportState.CLOSED,
             ].includes(connectionState);
             if (isSignalSevered && isPCSevered && !this._isClosed) {
                 this.emit(EngineEvent.Offline);
@@ -776,10 +778,10 @@ export default class RTCEngine extends (EventEmitter as new() => TypedEventEmitt
 
         if (event instanceof ErrorEvent && event.error) {
             const {error} = event.error;
-            this.log.error(`DataChannel error on ${channelKind}: ${event.message}`,
+            this.log.error(`DataChannel error on ${channelKind}: ${event.message}`, {
                 ...this.logContext,
                 error,
-            );
+            });
         } else {
             this.log.error(`Unknown DataChannel error on ${channelKind}`, {...this.logContext, event});
         }
@@ -963,7 +965,7 @@ export default class RTCEngine extends (EventEmitter as new() => TypedEventEmitt
             return;
         }
         this.log.warn(`${connection} disconnected`, this.logContext);
-        if (this.reconnectAttempts == 0) {
+        if (this.reconnectAttempts === 0) {
             // 仅在第一次尝试时重置开始时间
             this.reconnectStart = Date.now();
         }
@@ -1016,7 +1018,7 @@ export default class RTCEngine extends (EventEmitter as new() => TypedEventEmitt
         }
         // 在一次尝试尚未完成时多次尝试重新连接的保护
         if (this.attemptingReconnect) {
-            log.warn('already attempting reconnect, running early', this.logContext);
+            log.warn('already attempting reconnect, returning early', this.logContext);
             return;
         }
         if (
@@ -1132,7 +1134,7 @@ export default class RTCEngine extends (EventEmitter as new() => TypedEventEmitt
 
             // 在将引擎设置为恢复之前重新检查信号连接状态
             if (this.client.currentState !== SignalConnectionState.CONNECTED) {
-                throw new SignalReconnectError('Signal connection get severed during reconnect');
+                throw new SignalReconnectError('Signal connection got severed during reconnect');
             }
 
             this.regionUrlProvider?.resetAttempts();
@@ -1191,7 +1193,7 @@ export default class RTCEngine extends (EventEmitter as new() => TypedEventEmitt
             const rtcConfig = this.makeRTCConfiguration(res);
             this.pcManager.updateConfiguration(rtcConfig);
         } else {
-            this.log.warn('Did not receive reconnect response', this, this.logContext);
+            this.log.warn('Did not receive reconnect response', this.logContext);
         }
 
         if (this.shouldFailNext) {
@@ -1317,7 +1319,7 @@ export default class RTCEngine extends (EventEmitter as new() => TypedEventEmitt
         subscriber: boolean = this.subscriberPrimary,
     ) {
         if (!this.pcManager) {
-            throw  new UnexpectedConnectionState('PC manager is closed');
+            throw new UnexpectedConnectionState('PC manager is closed');
         }
         const transport = subscriber ? this.pcManager.subscriber : this.pcManager.publisher;
         const transportName = subscriber ? 'Subscriber' : 'Publisher';
@@ -1484,7 +1486,7 @@ export default class RTCEngine extends (EventEmitter as new() => TypedEventEmitt
                 answer: previousAnswer
                     ? toProtoSessionDescription({
                         sdp: previousAnswer.sdp,
-                        type: previousAnswer.type
+                        type: previousAnswer.type,
                     })
                     : undefined,
                 offer: previousOffer
@@ -1501,7 +1503,7 @@ export default class RTCEngine extends (EventEmitter as new() => TypedEventEmitt
                 publishTracks: getTrackPublicationInfo(localTracks),
                 dataChannels: this.dataChannelsInfo(),
                 trackSidsDisabled,
-            })
+            }),
         );
     }
 
@@ -1529,7 +1531,7 @@ export default class RTCEngine extends (EventEmitter as new() => TypedEventEmitt
         };
         getInfo(this.dataChannelForKind(DataPacket_Kind.LOSSY), SignalTarget.PUBLISHER);
         getInfo(this.dataChannelForKind(DataPacket_Kind.RELIABLE), SignalTarget.PUBLISHER);
-        getInfo(this.dataChannelForKind(DataPacket_Kind.LOSSY, true), SignalTarget.PUBLISHER);
+        getInfo(this.dataChannelForKind(DataPacket_Kind.LOSSY, true), SignalTarget.SUBSCRIBER);
         getInfo(this.dataChannelForKind(DataPacket_Kind.RELIABLE, true), SignalTarget.SUBSCRIBER);
         return infos;
     }

@@ -5,7 +5,7 @@
  */
 import {
     AudioCaptureOptions,
-    CreateLocalTrackOptions,
+    CreateLocalTracksOptions,
     ScreenShareCaptureOptions,
     ScreenSharePresets,
     VideoCaptureOptions
@@ -27,7 +27,7 @@ import {mediaTrackToLocalTrack} from "../participant/publishUtils";
  * @param options 创建音轨选项
  */
 export async function createLocalTracks(
-    options?: CreateLocalTrackOptions,
+    options?: CreateLocalTracksOptions,
 ): Promise<Array<LocalTrack>> {
     // 设置默认选项为真
     options ??= {};
@@ -74,7 +74,7 @@ export async function createLocalTracks(
         const track = mediaTrackToLocalTrack(mediaStreamTrack, trackConstraints);
         if (track.kind === Track.Kind.Video) {
             track.source = Track.Source.Camera;
-        } else if (track.kind === Track.Kind.Video) {
+        } else if (track.kind === Track.Kind.Audio) {
             track.source = Track.Source.Microphone;
         }
         track.mediaStream = stream;
@@ -114,7 +114,7 @@ export async function createLocalAudioTrack(
 export async function createLocalScreenTracks(
     options?: ScreenShareCaptureOptions,
 ): Promise<Array<LocalTrack>> {
-    if (options == undefined) {
+    if (options === undefined) {
         options = {};
     }
     if (options.resolution === undefined && !isSafari17()) {

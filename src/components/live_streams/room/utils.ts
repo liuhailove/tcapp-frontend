@@ -114,7 +114,7 @@ export function supportsVP9(): boolean {
     let hasVP9 = false;
     if (capabilities) {
         for (const codec of capabilities.codecs) {
-            if (codec.mimeType === 'video/vp9') {
+            if (codec.mimeType === 'video/VP9') {
                 hasVP9 = true;
                 break;
             }
@@ -366,8 +366,8 @@ export const getIntersectionObserver = () => {
             root: null,
             rootMargin: '0px',
         });
-        return intersectionObserver;
     }
+    return intersectionObserver;
 };
 
 /**

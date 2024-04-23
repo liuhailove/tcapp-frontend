@@ -87,3 +87,30 @@ export class PublishDataError extends TcError {
         super(13, message ?? 'unable to publish data');
     }
 }
+
+export enum MediaDeviceFailure {
+    // user rejected permissions
+    PermissionDenied = 'PermissionDenied',
+    // device is not available
+    NotFound = 'NotFound',
+    // device is in use. On Windows, only a single tab may get access to a device at a time.
+    DeviceInUse = 'DeviceInUse',
+    Other = 'Other',
+}
+
+export namespace MediaDeviceFailure {
+    export function getFailure(error: any): MediaDeviceFailure | undefined {
+        if (error && 'name' in error) {
+            if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+                return MediaDeviceFailure.NotFound;
+            }
+            if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+                return MediaDeviceFailure.PermissionDenied;
+            }
+            if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
+                return MediaDeviceFailure.DeviceInUse;
+            }
+            return MediaDeviceFailure.Other;
+        }
+    }
+}

@@ -13,7 +13,7 @@ import RemoteTrack from "../track/RemoteTrack";
 import {TrackPublication} from "../track/TrackPublication";
 import {Track} from "../track/Track";
 import LocalTrackPublication from "../track/LocalTrackPublication";
-import log, {getLogger, LoggerNames, StructureLogger} from "../../logger";
+import log, {getLogger, LoggerNames, StructuredLogger} from "../../logger";
 import {LoggerOptions} from "../types";
 import {ParticipantEvent, TrackEvent} from "../TrackEvents";
 import RemoteAudioTrack from "../track/RemoteAudioTrack";
@@ -113,7 +113,7 @@ export default class Participant extends (EventEmitter as new () => TypedEmitter
     /**
      * 日志
      */
-    protected log: StructureLogger = log;
+    protected log: StructuredLogger = log;
 
     /**
      * 日志选项
@@ -126,7 +126,7 @@ export default class Participant extends (EventEmitter as new () => TypedEmitter
     protected get logContext() {
         return {
             ...this.loggerOptions?.loggerContextCb?.(),
-        }
+        };
     }
 
     /**
@@ -164,9 +164,9 @@ export default class Participant extends (EventEmitter as new () => TypedEmitter
         this.identity = identity;
         this.name = name;
         this.metadata = metadata;
-        this.audioTrackPublications = new Map<string, TrackPublication>();
-        this.videoTrackPublications = new Map<string, TrackPublication>();
-        this.trackPublications = new Map<string, TrackPublication>();
+        this.audioTrackPublications = new Map();
+        this.videoTrackPublications = new Map();
+        this.trackPublications = new Map();
     }
 
     /**
@@ -304,9 +304,7 @@ export default class Participant extends (EventEmitter as new () => TypedEmitter
         this.permissions = permissions;
 
         if (changed) {
-            if (prevPermissions instanceof ParticipantPermission) {
-                this.emit(ParticipantEvent.ParticipantPermissionsChanged, prevPermissions);
-            }
+            this.emit(ParticipantEvent.ParticipantPermissionsChanged, prevPermissions);
         }
         return changed;
     }
@@ -327,7 +325,7 @@ export default class Participant extends (EventEmitter as new () => TypedEmitter
     setConnectionQuality(q: ProtoQuality) {
         const prevQuality = this._connectionQuality;
         this._connectionQuality = qualityFromProto(q);
-        if (prevQuality != this._connectionQuality) {
+        if (prevQuality !== this._connectionQuality) {
             this.emit(ParticipantEvent.ConnectionQualityChanged, this._connectionQuality);
         }
     }
@@ -360,6 +358,8 @@ export default class Participant extends (EventEmitter as new () => TypedEmitter
         if (pub.track) {
             pub.track.sid = publication.trackSid;
         }
+
+        this.trackPublications.set(publication.trackSid, publication);
         switch (publication.kind) {
             case Track.Kind.Audio:
                 this.audioTrackPublications.set(publication.trackSid, publication);

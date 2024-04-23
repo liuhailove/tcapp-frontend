@@ -22,7 +22,7 @@ export default class LocalAudioTrack extends LocalTrack<Track.Kind.Audio> {
      */
     private prevStats?: AudioSenderStats;
 
-    protected processor?: TrackProcessor<Track.Kind.Audio, AudioProcessorOptions>;
+    protected processor?: TrackProcessor<Track.Kind.Audio, AudioProcessorOptions> | undefined;
 
     /**
      *
@@ -50,7 +50,7 @@ export default class LocalAudioTrack extends LocalTrack<Track.Kind.Audio> {
      */
     async setDeviceId(deviceId: ConstrainDOMString): Promise<boolean> {
         if (
-            this.constraints.deviceId === deviceId &&
+            this._constraints.deviceId === deviceId &&
             this._mediaStreamTrack.getSettings().deviceId === unwrapConstraint(deviceId)
         ) {
             return true;
@@ -60,7 +60,7 @@ export default class LocalAudioTrack extends LocalTrack<Track.Kind.Audio> {
             await this.restartTrack();
         }
         return (
-            this.isMuted || unwrapConstraint(deviceId) == this._mediaStreamTrack.getSettings().deviceId
+            this.isMuted || unwrapConstraint(deviceId) === this._mediaStreamTrack.getSettings().deviceId
         );
     }
 
@@ -136,7 +136,7 @@ export default class LocalAudioTrack extends LocalTrack<Track.Kind.Audio> {
      * @param constraints
      * @protected
      */
-    protected async restart(constraints?: MediaTrackConstraints): Promise<LocalTrack> {
+    protected async restart(constraints?: MediaTrackConstraints): Promise<typeof this> {
         const track = await super.restart(constraints);
         this.checkForSilence();
         return track;

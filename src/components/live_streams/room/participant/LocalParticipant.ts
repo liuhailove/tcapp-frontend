@@ -16,12 +16,13 @@ import {EngineEvent, ParticipantEvent, TrackEvent} from "../TrackEvents";
 import {
     AudioCaptureOptions,
     BackupVideoCodec,
-    CreateLocalTrackOptions, isBackupCodec,
+    isBackupCodec,
     ScreenShareCaptureOptions,
     ScreenSharePresets,
     TrackPublishOptions,
     VideoCaptureOptions,
-    VideoPresets
+    VideoPresets,
+    CreateLocalTracksOptions
 } from "../track/options";
 import {DeviceUnsupportedError, TrackInvalidError, UnexpectedConnectionState} from "../errors";
 import {
@@ -43,18 +44,21 @@ import {
 } from "../../protocol/tc_rtc_pb";
 import {PCTransportState} from "../PCTransportManager";
 import {DataPublishOptions} from "../types";
+import {
+    ParticipantTrackPermission, trackPermissionToProto
+} from "./ParticipantTrackPermission.ts";
 
 
 /**
  * 本地参与者
  */
 export default class LocalParticipant extends Participant {
-    audioTrackPublications: Map<string, LocalTrackPublication>;
+    audioTrackPublications: Map<string, LocalTrackPublication> = new Map();
 
-    videoTrackPublications: Map<string, LocalTrackPublication>;
+    videoTrackPublications: Map<string, LocalTrackPublication> = new Map();
 
     /** map of track sid => all published tracks */
-    trackPublications: Map<string, LocalTrackPublication>;
+    trackPublications: Map<string, LocalTrackPublication> = new Map();
 
     /**
      * RTC引擎
@@ -84,7 +88,7 @@ export default class LocalParticipant extends Participant {
     /**
      * 参与者音轨权限
      */
-    private participantTrackPermissions: Array<ParticipantPermission> = [];
+    private participantTrackPermissions: Array<ParticipantTrackPermission> = [];
 
     /**
      * 是否所有参与者都可以订阅
@@ -148,7 +152,7 @@ export default class LocalParticipant extends Participant {
     setupEngine(engine: RTCEngine) {
         this.engine = engine;
         this.engine.on(EngineEvent.RemoteMute, (trackSid: string, muted: boolean) => {
-            const pub = this.videoTrackPublications.get(trackSid);
+            const pub = this.trackPublications.get(trackSid);
             if (!pub || !pub.track) {
                 return;
             }
@@ -177,7 +181,7 @@ export default class LocalParticipant extends Participant {
         if (!this.reconnectFuture) {
             this.reconnectFuture = new Future<void>();
         }
-    }
+    };
 
     /**
      * 处理重连完成
@@ -335,7 +339,7 @@ export default class LocalParticipant extends Participant {
                     for (const localTrack of localTracks) {
                         this.log.info('publishing track', {
                             ...this.logContext,
-                            ...getLogContextFromTrack(localTrack)
+                            ...getLogContextFromTrack(localTrack),
                         });
                         publishPromises.push(this.publishTrack(localTrack, publishOptions));
                     }
@@ -398,7 +402,7 @@ export default class LocalParticipant extends Participant {
     /**
      * 创建本地视频或者麦克风音轨
      */
-    async createTracks(options?: CreateLocalTrackOptions): Promise<LocalTrack[]> {
+    async createTracks(options?: CreateLocalTracksOptions): Promise<LocalTrack[]> {
         const opts = mergeDefaultOptions(
             options,
             this.roomOptions?.audioCaptureDefaults,
@@ -636,6 +640,10 @@ export default class LocalParticipant extends Participant {
             );
             opts.simulcast = false;
         }
+
+        if (opts.source) {
+            track.source = opts.source;
+        }
         const publishPromise = this.publish(track, opts, isStereo);
         this.pendingPublishPromises.set(track, publishPromise);
         try {
@@ -767,6 +775,9 @@ export default class LocalParticipant extends Participant {
                 ];
 
                 // 建立备份
+                if (opts.backupCodec === true) {
+                    opts.backupCodec = {codec: defaultVideoCodec};
+                }
                 if (opts.backupCodec &&
                     videoCodec !== opts.backupCodec.codec &&
                     // TODO 一旦备份编解码器支持 e2ee，就删除它
@@ -987,7 +998,7 @@ export default class LocalParticipant extends Participant {
                 {
                     codec: opts.videoCodec,
                     cid: simulcastTrack.mediaStreamTrack.id,
-                }
+                },
             ],
         });
         req.layers = videoLayersFromEncodings(req.width, req.height, encodings);
@@ -1014,7 +1025,7 @@ export default class LocalParticipant extends Participant {
 
     async unpublishTrack(
         track: LocalTrack | MediaStreamTrack,
-        stopOnUnpublish?: boolean
+        stopOnUnpublish?: boolean,
     ): Promise<LocalTrackPublication | undefined> {
         // 查看所有已发布的曲目以找到正确的曲目
         const publication = this.getPublicationForTrack(track);
@@ -1204,7 +1215,7 @@ export default class LocalParticipant extends Participant {
      */
     setTrackSubscriptionPermissions(
         allParticipantsAllowed: boolean,
-        participantTrackPermissions: ParticipantPermission[] = [],
+        participantTrackPermissions: ParticipantTrackPermission[] = [],
     ) {
         this.participantTrackPermissions = participantTrackPermissions;
         this.allParticipantsAllowedToSubscribe = allParticipantsAllowed;
@@ -1270,7 +1281,7 @@ export default class LocalParticipant extends Participant {
         }
 
         if (!track.sid) {
-            this.log.error('could not update status for unpublished track', {
+            this.log.error('could not update mute status for unpublished track', {
                 ...this.logContext,
                 ...getLogContextFromTrack(track),
             });
@@ -1338,7 +1349,7 @@ export default class LocalParticipant extends Participant {
             return;
         }
         this.unpublishTrack(track.track!);
-    }
+    };
 
     private handleTrackEnded = async (track: LocalTrack) => {
         if (
@@ -1381,6 +1392,13 @@ export default class LocalParticipant extends Participant {
                     } catch (e: any) {
                         // Firefox 的权限查询失败，我们继续并尝试重新启动轨道
                     }
+                }
+                if (!track.isMuted) {
+                    this.log.debug('track ended, attempting to use a different device', {
+                        ...this.logContext,
+                        ...getLogContextFromTrack(track),
+                    });
+                    await track.restartTrack();
                 }
             } catch (e) {
                 this.log.warn(`could not restart track, muting instead`, {
